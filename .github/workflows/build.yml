@@ -24,8 +24,19 @@ jobs:
         run: chmod +x gradlew
 
       - name: Create .env
+        run: echo "GEMINI_API_KEY=AIzaSyCZ4lCI44LB7RQR88mTjQQEFA7MDkl_OJg" > .env
+
+      - name: Create debug keystore
         run: |
-          echo "GEMINI_API_KEY=AIzaSyCZ4lCI44LB7RQR88mTjQQEFA7MDkl_OJg" > .env
+          keytool -genkeypair \
+            -alias androiddebugkey \
+            -keypass android \
+            -keystore debug.keystore \
+            -storepass android \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000
 
       - name: Build
         run: ./gradlew assembleDebug
