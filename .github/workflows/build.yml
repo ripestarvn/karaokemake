@@ -1,0 +1,30 @@
+name: MuKaraMake
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Create .env
+        run: |
+          echo "GEMINI_API_KEY=AIzaSyCZ4lCI44LB7RQR88mTjQQEFA7MDkl_OJg" > .env
+
+      - name: Build
+        run: ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: app/build/outputs/apk/**/*.apk
