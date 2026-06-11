@@ -39,7 +39,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.api.GeminiClient
 import com.example.data.KaraokeProject
 import com.example.data.PresetSongs
 import com.example.data.TimedSyllable
@@ -483,9 +482,6 @@ fun EditorScreen(
             ) {
                 when (activeTab) {
                     "Nhập lời" -> {
-                        var promptForAI by remember { mutableStateOf("") }
-                        var aiGenerating by remember { mutableStateOf(false) }
-
                         Column(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -505,66 +501,12 @@ fun EditorScreen(
                                 textStyle = TextStyle(color = Color.White, fontSize = 11.sp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(0.5f),
+                                    .weight(1f),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Color.White,
                                     unfocusedBorderColor = Color.Gray
                                 )
                             )
-
-                            Divider(color = Color.White.copy(alpha = 0.1f))
-
-                            // Gemini AI assistant block integration using server-side Gemini capability
-                            Text("💡 SÁNG TÁC LỜI NHANH BẰNG GEMINI AI:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD0BCFF))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = promptForAI,
-                                    onValueChange = { promptForAI = it },
-                                    placeholder = { Text("Chủ đề: Tình yêu, mùa xuân...", fontSize = 10.sp, color = Color.Gray) },
-                                    textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
-                                    modifier = Modifier.weight(1.2f),
-                                    singleLine = true,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = Color(0xFFD0BCFF),
-                                        unfocusedBorderColor = Color.DarkGray
-                                    )
-                                )
-
-                                Button(
-                                    onClick = {
-                                        if (promptForAI.isNotBlank()) {
-                                            aiGenerating = true
-                                            scope.launch {
-                                                val res = GeminiClient.generateLyrics(promptForAI)
-                                                if (res.isNotBlank()) {
-                                                    // Copy generated to active lyrics inputs
-                                                    activeProject?.let {
-                                                        val updatedProj = it.copy(lyricsText = res)
-                                                        viewModel.parseLyricsToSyllablesQueue(res)
-                                                        viewModel.saveActiveProject()
-                                                    }
-                                                    Toast.makeText(context, "Sáng tác thành công!", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(context, "Lỗi tạo lời hoặc chưa cấu hình API Key.", Toast.LENGTH_LONG).show()
-                                                }
-                                                aiGenerating = false
-                                            }
-                                        }
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD0BCFF), contentColor = Color(0xFF381E72)),
-                                    contentPadding = PaddingValues(horizontal = 10.dp),
-                                    modifier = Modifier.height(36.dp)
-                                ) {
-                                    if (aiGenerating) {
-                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color(0xFF381E72), strokeWidth = 2.dp)
-                                    } else {
-                                        Text("Viết bằng AI", fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
                         }
                     }
 
