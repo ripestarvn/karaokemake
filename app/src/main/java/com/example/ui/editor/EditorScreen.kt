@@ -995,13 +995,24 @@ fun EditorScreen(
                                     exportingState = "MP4"
                                     exportProgress = 0f
                                     scope.launch {
-                                        // Slow render simulation representing frames generator
-                                        for (i in 1..20) {
-                                            delay(150)
-                                            exportProgress = i / 20f
+                                        // Collect real rendering progress from VM in background
+                                        val progressJob = launch {
+                                            viewModel.exportProgressFlow.collect { progress ->
+                                                exportProgress = progress
+                                            }
                                         }
-                                        val mp4File = viewModel.saveMp4File()
-                                        exportedFilepath = mp4File?.absolutePath ?: "Thư mục Downloads/KaraokeVideo"
+                                        // Run the real media transcoder in IO thread
+                                        val mp4File = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                            viewModel.saveMp4File()
+                                        }
+                                        progressJob.cancel()
+                                        exportProgress = 1f
+                                        exportedFilepath = mp4File?.absolutePath ?: "LỖI XUẤT PHIM"
+                                        if (mp4File == null) {
+                                            Toast.makeText(context, "Lỗi trích xuất định dạng MP4!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "Đã xuất video karaoke thành công!", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD0BCFF), contentColor = Color(0xFF381E72)),
@@ -1267,11 +1278,14 @@ fun KaraokeSubtitlesDisplay(
                 // Determine the current active line based on current playback playhead
                 val currentLineIdx = allLineIndexes.firstOrNull { idx ->
                     val syls = linesMap[idx] ?: emptyList()
-                    val lineStart = syls.firstOrNull()?.startTimeMs ?: 0L
-                    val nextIdx = allLineIndexes.getOrNull(allLineIndexes.indexOf(idx) + 1)
-                    val nextStart = nextIdx?.let { linesMap[it]?.firstOrNull()?.startTimeMs } ?: Long.MAX_VALUE
-                    currentTimeMs >= lineStart && currentTimeMs < nextStart
-                } ?: allLineIndexes.firstOrNull() ?: 0
+                    val lineStart = syls.minOfOrNull { it.startTimeMs } ?: 0L
+                    val lineEnd = syls.maxOfOrNull { it.endTimeMs } ?: 0L
+                    currentTimeMs >= lineStart && currentTimeMs <= lineEnd
+                } ?: allLineIndexes.firstOrNull { idx ->
+                    val syls = linesMap[idx] ?: emptyList()
+                    val lineStart = syls.minOfOrNull { it.startTimeMs } ?: 0L
+                    currentTimeMs < lineStart
+                } ?: allLineIndexes.lastOrNull() ?: 0
 
                 // Assign the dynamic even-indexed and odd-indexed visual display rows
                 val evenLineIdx = if (currentLineIdx % 2 == 0) currentLineIdx else (currentLineIdx + 1)
@@ -1279,6 +1293,9 @@ fun KaraokeSubtitlesDisplay(
 
                 val evenSyllables = linesMap[evenLineIdx]?.sortedBy { it.syllableIndex }
                 val oddSyllables = linesMap[oddLineIdx]?.sortedBy { it.syllableIndex }
+
+                val padPrep = 3000L
+                val padPost = 2500L
 
                 // Row 1 (Top): Renders the active or upcoming even-indexed lyrics line
                 Box(
@@ -1289,31 +1306,35 @@ fun KaraokeSubtitlesDisplay(
                     contentAlignment = Alignment.CenterStart
                 ) {
                     if (evenSyllables != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            evenSyllables.forEach { syl ->
-                                val activePercent = when {
-                                    currentTimeMs < syl.startTimeMs -> 0f
-                                    currentTimeMs > syl.endTimeMs -> 1f
-                                    else -> {
-                                        val total = (syl.endTimeMs - syl.startTimeMs).toFloat()
-                                        if (total > 0) (currentTimeMs - syl.startTimeMs) / total else 1f
+                        val firstStart = evenSyllables.firstOrNull()?.startTimeMs ?: 0L
+                        val lastEnd = evenSyllables.lastOrNull()?.endTimeMs ?: 0L
+                        if (currentTimeMs >= (firstStart - padPrep) && currentTimeMs <= (lastEnd + padPost)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                evenSyllables.forEach { syl ->
+                                    val activePercent = when {
+                                        currentTimeMs < syl.startTimeMs -> 0f
+                                        currentTimeMs > syl.endTimeMs -> 1f
+                                        else -> {
+                                            val total = (syl.endTimeMs - syl.startTimeMs).toFloat()
+                                            if (total > 0) (currentTimeMs - syl.startTimeMs) / total else 1f
+                                        }
                                     }
-                                }
 
-                                TextWithStrokeAndShadow(
-                                    text = syl.text + " ",
-                                    activePercent = activePercent,
-                                    fontSize = fontSize,
-                                    fontName = fontName,
-                                    colorIdle = textColorIdle,
-                                    colorActive = textColorActive,
-                                    strokeColor = strokeColor,
-                                    strokeWidthPx = strokeWidth,
-                                    shadowColor = shadowColor,
-                                    shadowRadiusPx = shadowRadius
-                                )
+                                    TextWithStrokeAndShadow(
+                                        text = syl.text + " ",
+                                        activePercent = activePercent,
+                                        fontSize = fontSize,
+                                        fontName = fontName,
+                                        colorIdle = textColorIdle,
+                                        colorActive = textColorActive,
+                                        strokeColor = strokeColor,
+                                        strokeWidthPx = strokeWidth,
+                                        shadowColor = shadowColor,
+                                        shadowRadiusPx = shadowRadius
+                                    )
+                                }
                             }
                         }
                     }
@@ -1328,31 +1349,35 @@ fun KaraokeSubtitlesDisplay(
                     contentAlignment = Alignment.CenterEnd
                 ) {
                     if (oddSyllables != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            oddSyllables.forEach { syl ->
-                                val activePercent = when {
-                                    currentTimeMs < syl.startTimeMs -> 0f
-                                    currentTimeMs > syl.endTimeMs -> 1f
-                                    else -> {
-                                        val total = (syl.endTimeMs - syl.startTimeMs).toFloat()
-                                        if (total > 0) (currentTimeMs - syl.startTimeMs) / total else 1f
+                        val firstStart = oddSyllables.firstOrNull()?.startTimeMs ?: 0L
+                        val lastEnd = oddSyllables.lastOrNull()?.endTimeMs ?: 0L
+                        if (currentTimeMs >= (firstStart - padPrep) && currentTimeMs <= (lastEnd + padPost)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                oddSyllables.forEach { syl ->
+                                    val activePercent = when {
+                                        currentTimeMs < syl.startTimeMs -> 0f
+                                        currentTimeMs > syl.endTimeMs -> 1f
+                                        else -> {
+                                            val total = (syl.endTimeMs - syl.startTimeMs).toFloat()
+                                            if (total > 0) (currentTimeMs - syl.startTimeMs) / total else 1f
+                                        }
                                     }
-                                }
 
-                                TextWithStrokeAndShadow(
-                                    text = syl.text + " ",
-                                    activePercent = activePercent,
-                                    fontSize = fontSize,
-                                    fontName = fontName,
-                                    colorIdle = textColorIdle,
-                                    colorActive = textColorActive,
-                                    strokeColor = strokeColor,
-                                    strokeWidthPx = strokeWidth,
-                                    shadowColor = shadowColor,
-                                    shadowRadiusPx = shadowRadius
-                                )
+                                    TextWithStrokeAndShadow(
+                                        text = syl.text + " ",
+                                        activePercent = activePercent,
+                                        fontSize = fontSize,
+                                        fontName = fontName,
+                                        colorIdle = textColorIdle,
+                                        colorActive = textColorActive,
+                                        strokeColor = strokeColor,
+                                        strokeWidthPx = strokeWidth,
+                                        shadowColor = shadowColor,
+                                        shadowRadiusPx = shadowRadius
+                                    )
+                                }
                             }
                         }
                     }

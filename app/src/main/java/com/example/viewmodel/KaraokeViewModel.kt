@@ -2,6 +2,17 @@ package com.example.viewmodel
 
 import android.app.Application
 import android.os.Environment
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Shader
+import android.graphics.LinearGradient
+import android.graphics.Typeface
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.media.MediaMuxer
+import android.media.MediaExtractor
 import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -453,27 +464,475 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // Generate simulated high-fidelity MP4 and export
-    fun saveMp4File(): File? {
-        try {
-            val downloadDir = getApplication<Application>().getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            if (downloadDir != null && !downloadDir.exists()) {
-                downloadDir.mkdirs()
+    val exportProgressFlow = MutableStateFlow(0f)
+
+    // Helper to convert ARGB image pixels to universal YUV420 semiplanar (NV12) format
+    private fun encodeYUV420SP(yuv420sp: ByteArray, argb: IntArray, width: Int, height: Int) {
+        val frameSize = width * height
+        var yIndex = 0
+        var uvIndex = frameSize
+
+        var r: Int
+        var g: Int
+        var b: Int
+        var y: Int
+        var u: Int
+        var v: Int
+        var index = 0
+        for (j in 0 until height) {
+            for (i in 0 until width) {
+                r = (argb[index] and 0xff0000) ushr 16
+                g = (argb[index] and 0xff00) ushr 8
+                b = argb[index] and 0xff
+
+                y = ((66 * r + 129 * g + 25 * b + 128) ushr 8) + 16
+                u = ((-38 * r - 74 * g + 112 * b + 128) ushr 8) + 128
+                v = ((112 * r - 94 * g - 18 * b + 128) ushr 8) + 128
+
+                yuv420sp[yIndex++] = (if (y < 0) 0 else if (y > 255) 255 else y).toByte()
+                if (j % 2 == 0 && index % 2 == 0) {
+                    yuv420sp[uvIndex++] = (if (v < 0) 0 else if (v > 255) 255 else v).toByte()
+                    yuv420sp[uvIndex++] = (if (u < 0) 0 else if (u > 255) 255 else u).toByte()
+                }
+                index++
             }
-            val fileName = "Karaoke_${_activeProject.value?.title?.replace(" ", "_") ?: "Project"}.mp4"
-            val file = File(downloadDir, fileName)
-            
-            // To make the file completely and genuinely compatible/readable, we write a realistic mp4 container sequence
-            val stream = FileOutputStream(file)
-            stream.write("KARAOKE_VIDEO_CONTAINER_MP4_HEADER_STUB".toByteArray())
-            stream.write(exportToSrt().toByteArray())
-            stream.write("\nRENDERSETTINGS: RESOLUTION=1080P FPS=60 QUALITY=HIGH".toByteArray())
-            stream.close()
+        }
+    }
+
+    // Helper to draw syllables line-by-line beautifully
+    private fun drawSyllablesLine(
+        canvas: Canvas,
+        syllables: List<TimedSyllable>,
+        currentTimeMs: Long,
+        startX: Float,
+        baseY: Float,
+        fontSize: Float,
+        colorIdle: Int,
+        colorActive: Int,
+        strokeColor: Int,
+        strokeWidth: Float,
+        shadowColor: Int,
+        shadowRadius: Float,
+        customTypeface: Typeface
+    ) {
+        val strokePaint = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+            this.strokeWidth = strokeWidth
+            color = strokeColor
+            textSize = fontSize
+            typeface = customTypeface
+        }
+
+        val fillPaintIdle = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = colorIdle
+            textSize = fontSize
+            typeface = customTypeface
+            if (shadowRadius > 0) {
+                setShadowLayer(shadowRadius, 2f, 2f, shadowColor)
+            }
+        }
+
+        val fillPaintActive = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = colorActive
+            textSize = fontSize
+            typeface = customTypeface
+            if (shadowRadius > 0) {
+                setShadowLayer(shadowRadius, 2f, 2f, shadowColor)
+            }
+        }
+
+        var currentX = startX
+        syllables.forEach { syl ->
+            val text = syl.text + " "
+            val wordWidth = fillPaintIdle.measureText(text)
+
+            val activePercent = when {
+                currentTimeMs < syl.startTimeMs -> 0f
+                currentTimeMs > syl.endTimeMs -> 1f
+                else -> {
+                    val total = (syl.endTimeMs - syl.startTimeMs).toFloat()
+                    if (total > 0) (currentTimeMs - syl.startTimeMs) / total else 1f
+                }
+            }
+
+            // Draw Idle text (Stroke, then Fill)
+            canvas.drawText(text, currentX, baseY, strokePaint)
+            canvas.drawText(text, currentX, baseY, fillPaintIdle)
+
+            // Draw Active overlay if activePercent > 0
+            if (activePercent > 0f) {
+                canvas.save()
+                canvas.clipRect(currentX, 0f, currentX + (wordWidth * activePercent), canvas.height.toFloat())
+                canvas.drawText(text, currentX, baseY, strokePaint)
+                canvas.drawText(text, currentX, baseY, fillPaintActive)
+                canvas.restore()
+            }
+
+            currentX += wordWidth
+        }
+    }
+
+    // High fidelity offline mp4 video renderer
+    fun saveMp4File(): File? {
+        exportProgressFlow.value = 0.01f
+        val downloadDir = getApplication<Application>().getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (downloadDir != null && !downloadDir.exists()) {
+            downloadDir.mkdirs()
+        }
+        val fileName = "Karaoke_${_activeProject.value?.title?.replace(" ", "_") ?: "Project"}.mp4"
+        val file = File(downloadDir, fileName)
+
+        // Determine correct video duration
+        val syllables = _syncedSyllables.value
+        val maxSylTime = if (syllables.isNotEmpty()) syllables.maxOf { it.endTimeMs } else 0L
+        val defaultDuration = _activeProject.value?.audioDurationMs ?: 180000L
+        val videoDurationMs = if (maxSylTime > 0) Math.min(maxSylTime + 3000L, defaultDuration) else defaultDuration
+
+        // Extract background audio track if available
+        val audioPath = _activeProject.value?.audioFileName
+        val audioExtractor = MediaExtractor()
+        var hasAudio = false
+        var audioTrackIndexInFile = -1
+        var audioFormat: MediaFormat? = null
+
+        if (audioPath != null && File(audioPath).exists()) {
+            try {
+                audioExtractor.setDataSource(audioPath)
+                for (i in 0 until audioExtractor.trackCount) {
+                    val format = audioExtractor.getTrackFormat(i)
+                    val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                    if (mime.startsWith("audio/")) {
+                        audioTrackIndexInFile = i
+                        audioFormat = format
+                        hasAudio = true
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                hasAudio = false
+            }
+        }
+
+        var isMuxerStarted = false
+        var videoTrackIndex = -1
+        var audioTrackIndex = -1
+
+        val width = 640
+        val height = 360
+        val fps = 20
+        val frameDurationMs = 1000L / fps
+        val totalFrames = videoDurationMs / frameDurationMs
+
+        var codec: MediaCodec? = null
+        var muxer: MediaMuxer? = null
+
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val argb = IntArray(width * height)
+        val yuv = ByteArray(width * height * 3 / 2)
+
+        try {
+            muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            if (hasAudio && audioFormat != null) {
+                audioTrackIndex = muxer.addTrack(audioFormat)
+            }
+
+            // Set up H264 video codec format
+            val videoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
+                setInteger(MediaFormat.KEY_BIT_RATE, 1200000) // 1.2 Mbps is extremely beautiful for 360p
+                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            }
+
+            codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            codec.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            codec.start()
+
+            val bufferInfo = MediaCodec.BufferInfo()
+            val timeoutUs = 5000L
+
+            // Style configuration matching current VM/custom settings
+            val fontName = customFontName.value
+            val fontSize = 24f // Optimized for 360p height
+            val colorIdle = customTextColorIdle.value.toInt()
+            val colorActive = customTextColorActive.value.toInt()
+            val strokeColor = customStrokeColor.value.toInt()
+            val strokeWidth = 5f
+            val shadowColor = customShadowColor.value.toInt()
+            val shadowRadius = 4f
+            val bgType = customBackgroundType.value
+
+            var customTypeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            if (fontName != "SansSerif" && fontName != "Serif" && fontName != "Monospace") {
+                val fontDir = getApplication<Application>().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                if (fontDir != null) {
+                    val ttfFile = File(fontDir, fontName)
+                    if (ttfFile.exists()) {
+                        try {
+                            customTypeface = Typeface.createFromFile(ttfFile)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+            } else {
+                customTypeface = when (fontName) {
+                    "Serif" -> Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                    "Monospace" -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+                    else -> Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                }
+            }
+
+            val linesMap = syllables.groupBy { it.lineIndex }
+            val allLineIndexes = linesMap.keys.sorted()
+
+            // Main Frame Generation Code
+            for (frame in 0..totalFrames) {
+                val currentTimeMs = frame * frameDurationMs
+                val presentationTimeUs = currentTimeMs * 1000L
+
+                // 1. Draw Background
+                when (bgType) {
+                    "SOLID_GREEN" -> canvas.drawColor(android.graphics.Color.parseColor("#00B140"))
+                    "BLACK" -> canvas.drawColor(android.graphics.Color.BLACK)
+                    "GRADIENT" -> {
+                        val lg = LinearGradient(0f, 0f, 0f, height.toFloat(),
+                            android.graphics.Color.parseColor("#1F1C2C"),
+                            android.graphics.Color.parseColor("#928DAB"),
+                            Shader.TileMode.CLAMP
+                        )
+                        val p = Paint().apply { shader = lg }
+                        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), p)
+                    }
+                    else -> { // CHECKERBOARD
+                        canvas.drawColor(android.graphics.Color.parseColor("#121212"))
+                        val gridPaint = Paint().apply {
+                            color = android.graphics.Color.parseColor("#1D1D1D")
+                            this.setStrokeWidth(2f)
+                        }
+                        for (x in 0..width step 40) {
+                            canvas.drawLine(x.toFloat(), 0f, x.toFloat(), height.toFloat(), gridPaint)
+                        }
+                        for (y in 0..height step 40) {
+                            canvas.drawLine(0f, y.toFloat(), width.toFloat(), y.toFloat(), gridPaint)
+                        }
+                    }
+                }
+
+                // 2. Draw Lyrics Subtitles Overlay
+                if (allLineIndexes.isNotEmpty()) {
+                    var currentLineIdx = allLineIndexes.firstOrNull { idx ->
+                        val syls = linesMap[idx] ?: emptyList()
+                        val lineStart = syls.firstOrNull()?.startTimeMs ?: 0L
+                        val nextIdx = allLineIndexes.getOrNull(allLineIndexes.indexOf(idx) + 1)
+                        val nextStart = nextIdx?.let { linesMap[it]?.firstOrNull()?.startTimeMs } ?: Long.MAX_VALUE
+                        currentTimeMs >= lineStart && currentTimeMs < nextStart
+                    } ?: allLineIndexes.firstOrNull() ?: 0
+
+                    val evenLineIdx = if (currentLineIdx % 2 == 0) currentLineIdx else (currentLineIdx + 1)
+                    val oddLineIdx = if (currentLineIdx % 2 == 0) (currentLineIdx + 1) else currentLineIdx
+
+                    val evenSyllables = linesMap[evenLineIdx]?.sortedBy { it.syllableIndex }
+                    val oddSyllables = linesMap[oddLineIdx]?.sortedBy { it.syllableIndex }
+
+                    val padPrep = 3000L
+                    val padPost = 2500L
+
+                    // Even Row
+                    if (evenSyllables != null) {
+                        val firstStart = evenSyllables.firstOrNull()?.startTimeMs ?: 0L
+                        val lastEnd = evenSyllables.lastOrNull()?.endTimeMs ?: 0L
+                        if (currentTimeMs >= (firstStart - padPrep) && currentTimeMs <= (lastEnd + padPost)) {
+                            drawSyllablesLine(canvas, evenSyllables, currentTimeMs, 40f, 130f, fontSize,
+                                colorIdle, colorActive, strokeColor, strokeWidth, shadowColor, shadowRadius, customTypeface)
+                        }
+                    }
+
+                    // Odd Row
+                    if (oddSyllables != null) {
+                        val firstStart = oddSyllables.firstOrNull()?.startTimeMs ?: 0L
+                        val lastEnd = oddSyllables.lastOrNull()?.endTimeMs ?: 0L
+                        if (currentTimeMs >= (firstStart - padPrep) && currentTimeMs <= (lastEnd + padPost)) {
+                            val linePaint = Paint().apply {
+                                textSize = fontSize
+                                typeface = customTypeface
+                            }
+                            var totalWidth = 0f
+                            oddSyllables.forEach { totalWidth += linePaint.measureText(it.text + " ") }
+                            val startX = (width.toFloat() - 40f) - totalWidth
+                            drawSyllablesLine(canvas, oddSyllables, currentTimeMs, Math.max(40f, startX), 250f, fontSize,
+                                colorIdle, colorActive, strokeColor, strokeWidth, shadowColor, shadowRadius, customTypeface)
+                        }
+                    }
+                } else {
+                    val teaserPaint = Paint().apply {
+                        isAntiAlias = true
+                        color = android.graphics.Color.argb(128, 255, 255, 255)
+                        textSize = 18f
+                        textAlign = Paint.Align.CENTER
+                        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                    }
+                    canvas.drawText("[ Karaoke Video Subtitles Overlay ]", (width / 2).toFloat(), (height / 2).toFloat(), teaserPaint)
+                }
+
+                // 3. Queue frames to MediaCodec
+                bitmap.getPixels(argb, 0, width, 0, 0, width, height)
+                encodeYUV420SP(yuv, argb, width, height)
+
+                var inputQueued = false
+                while (!inputQueued) {
+                    val inputBufferIndex = codec.dequeueInputBuffer(timeoutUs)
+                    if (inputBufferIndex >= 0) {
+                        val inputBuffer = codec.getInputBuffer(inputBufferIndex)
+                        if (inputBuffer != null) {
+                            inputBuffer.clear()
+                            inputBuffer.put(yuv)
+                            codec.queueInputBuffer(inputBufferIndex, 0, yuv.size, presentationTimeUs, 0)
+                            inputQueued = true
+                        }
+                    } else {
+                        videoTrackIndex = drainOutput(codec, muxer, bufferInfo, videoTrackIndex) { isMuxerStarted = true }
+                    }
+                }
+
+                // Dequeue output from encoder
+                videoTrackIndex = drainOutput(codec, muxer, bufferInfo, videoTrackIndex) { isMuxerStarted = true }
+
+                // Update Progress Flow callback
+                exportProgressFlow.value = (frame.toFloat() / totalFrames).coerceIn(0f, 1f)
+            }
+
+            // Flush Codec by submitting End Of Stream
+            var eosQueued = false
+            val endPresentationTimeUs = videoDurationMs * 1000L
+            while (!eosQueued) {
+                val inputBufferIndex = codec.dequeueInputBuffer(timeoutUs)
+                if (inputBufferIndex >= 0) {
+                    codec.queueInputBuffer(inputBufferIndex, 0, 0, endPresentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                    eosQueued = true
+                } else {
+                    videoTrackIndex = drainOutput(codec, muxer, bufferInfo, videoTrackIndex) { isMuxerStarted = true }
+                }
+            }
+
+            // Drain remaining frames
+            var isEOSFinished = false
+            while (!isEOSFinished) {
+                val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, timeoutUs)
+                if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    if (videoTrackIndex < 0) {
+                        val newFormat = codec.outputFormat
+                        videoTrackIndex = muxer.addTrack(newFormat)
+                        muxer.start()
+                        isMuxerStarted = true
+                    }
+                } else if (outputBufferIndex >= 0) {
+                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                        isEOSFinished = true
+                    }
+                    val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
+                    if (outputBuffer != null && isMuxerStarted && videoTrackIndex >= 0) {
+                        if (bufferInfo.size > 0) {
+                            outputBuffer.position(bufferInfo.offset)
+                            outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                            muxer.writeSampleData(videoTrackIndex, outputBuffer, bufferInfo)
+                        }
+                    }
+                    codec.releaseOutputBuffer(outputBufferIndex, false)
+                } else {
+                    break
+                }
+            }
+
+            // 4. Mux Audio Track if available (Copy original high-fidelity sample buffers)
+            if (hasAudio && audioTrackIndex >= 0 && audioTrackIndexInFile >= 0) {
+                audioExtractor.selectTrack(audioTrackIndexInFile)
+                val audioBuffer = java.nio.ByteBuffer.allocate(1024 * 1024)
+                val audioBufferInfo = MediaCodec.BufferInfo()
+                while (true) {
+                    val sampleSize = audioExtractor.readSampleData(audioBuffer, 0)
+                    if (sampleSize < 0) break
+                    val presentationTimeUs = audioExtractor.sampleTime
+
+                    // Stop copying if audio goes beyond video segment
+                    if (presentationTimeUs > endPresentationTimeUs) {
+                        break
+                    }
+
+                    audioBufferInfo.offset = 0
+                    audioBufferInfo.size = sampleSize
+                    audioBufferInfo.presentationTimeUs = presentationTimeUs
+                    audioBufferInfo.flags = audioExtractor.sampleFlags
+
+                    muxer.writeSampleData(audioTrackIndex, audioBuffer, audioBufferInfo)
+                    audioExtractor.advance()
+                }
+            }
+
+            exportProgressFlow.value = 1f
             return file
         } catch (e: Exception) {
             e.printStackTrace()
             return null
+        } finally {
+            try {
+                codec?.stop()
+                codec?.release()
+            } catch (e: Exception) {}
+            try {
+                if (isMuxerStarted) {
+                    muxer?.stop()
+                }
+                muxer?.release()
+            } catch (e: Exception) {}
+            try {
+                audioExtractor.release()
+            } catch (e: Exception) {}
+            bitmap.recycle()
         }
+    }
+
+    private fun drainOutput(
+        codec: MediaCodec,
+        muxer: MediaMuxer,
+        bufferInfo: MediaCodec.BufferInfo,
+        trackIndex: Int,
+        onMuxerStart: () -> Unit
+    ): Int {
+        var videoTrack = trackIndex
+        var outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+        while (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED || outputBufferIndex >= 0) {
+            if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                if (videoTrack < 0) {
+                    val newFormat = codec.outputFormat
+                    videoTrack = muxer.addTrack(newFormat)
+                    muxer.start()
+                    onMuxerStart()
+                }
+            } else {
+                val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
+                if (outputBuffer != null && videoTrack >= 0) {
+                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                        bufferInfo.size = 0
+                    }
+                    if (bufferInfo.size > 0) {
+                        outputBuffer.position(bufferInfo.offset)
+                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                        muxer.writeSampleData(videoTrack, outputBuffer, bufferInfo)
+                    }
+                }
+                codec.releaseOutputBuffer(outputBufferIndex, false)
+            }
+            outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+        }
+        return videoTrack
     }
 
     private fun formatSrtTime(timeMs: Long): String {
