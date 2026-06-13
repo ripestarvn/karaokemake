@@ -1,0 +1,6 @@
+{
+  "name": "Karaoke Maker",
+  "description": "Create amazing Karaoke videos on your phone. Customize lyrics alignment, waveforms, text styles, backgrounds, and export to MP4/SRT.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
