@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioSynthesizer
+import com.example.audio.MidiParser
 import com.example.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -81,6 +82,22 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
     val customShadowColor = MutableStateFlow(0xAA000000)
     val customShadowRadius = MutableStateFlow(6f)
     val customBackgroundType = MutableStateFlow("CHECKERBOARD") // CHECKERBOARD, SOLID_GREEN, BLACK, GRADIENT
+    val customScreenPreset = MutableStateFlow("HDV 1080 (1920x1080)")
+    val customLayoutMode = MutableStateFlow("Two Rows")
+    val customRow1Align = MutableStateFlow("Left")
+    val customRow1OffsetY = MutableStateFlow(0f)
+    val customRow2Align = MutableStateFlow("Right")
+    val customRow2OffsetY = MutableStateFlow(0f)
+    val customStepInMs = MutableStateFlow(2000L)
+    val customStepOutMs = MutableStateFlow(2000L)
+    val customGlobalOffsetMs = MutableStateFlow(0L)
+    val customEnableSignals = MutableStateFlow(true)
+    val customSignalDotsCount = MutableStateFlow(4)
+    val customSignalColor = MutableStateFlow(0xFF0000FF)
+    val customSignalDurationMs = MutableStateFlow(4000L)
+
+    // Notification channel for UI feedback
+    val userNotification = MutableSharedFlow<String>()
 
     // Audio synthesizer
     private val synthesizer = AudioSynthesizer()
@@ -88,11 +105,14 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
 
     // For custom imported fonts (.ttf paths)
     val importedFontPaths = mutableStateListOf<File>()
+    // For custom imported soundfonts (.sf2 paths)
+    val importedSoundfontPaths = mutableStateListOf<File>()
 
     init {
         // Core initialization
         generateDefaultWaveform()
         loadUploadedFonts()
+        loadUploadedSoundfonts()
     }
 
     private fun loadUploadedFonts() {
@@ -100,6 +120,14 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
         val fontFiles = storageDir.listFiles { _, name -> name.endsWith(".ttf", ignoreCase = true) }
         if (fontFiles != null) {
             importedFontPaths.addAll(fontFiles)
+        }
+    }
+
+    private fun loadUploadedSoundfonts() {
+        val storageDir = getApplication<Application>().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: return
+        val sf2Files = storageDir.listFiles { _, name -> name.endsWith(".sf2", ignoreCase = true) }
+        if (sf2Files != null) {
+            importedSoundfontPaths.addAll(sf2Files)
         }
     }
 
@@ -114,6 +142,148 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    fun importCustomSoundFont(uri: android.net.Uri) {
+        val context = getApplication<Application>()
+        val resolver = context.contentResolver
+        var fileName = "imported_soundfont_${System.currentTimeMillis()}.sf2"
+        val cursor = resolver.query(uri, null, null, null, null)
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex != -1) {
+                    val displayName = it.getString(nameIndex)
+                    if (!displayName.isNullOrEmpty()) {
+                        fileName = displayName
+                    }
+                }
+            }
+        }
+
+        val destDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: return
+        if (!destDir.exists()) destDir.mkdirs()
+        val destFile = File(destDir, fileName)
+
+        try {
+            resolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(destFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            // RAM and File size memory safety check
+            val memoryError = synthesizer.checkSoundFontMemorySafety(destFile)
+            if (memoryError != null) {
+                destFile.delete()
+                viewModelScope.launch {
+                    userNotification.emit(memoryError)
+                }
+                return
+            }
+
+            if (!importedSoundfontPaths.contains(destFile)) {
+                importedSoundfontPaths.add(destFile)
+            }
+            
+            // Set for active project
+            selectProjectSoundfont(destFile)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            viewModelScope.launch {
+                userNotification.emit("Lỗi khi nhập SoundFont: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    fun selectProjectSoundfont(file: File) {
+        val memoryError = synthesizer.checkSoundFontMemorySafety(file)
+        if (memoryError != null) {
+            viewModelScope.launch {
+                userNotification.emit(memoryError)
+            }
+            return
+        }
+        val currentProject = _activeProject.value ?: return
+        val updated = currentProject.copy(
+            soundfontPath = file.absolutePath,
+            lastModified = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.updateProject(updated)
+            _activeProject.value = updated
+            synthesizer.loadSoundFont(file)
+            userNotification.emit("Đã kích hoạt SoundFont: ${file.name}")
+        }
+    }
+
+    fun resetProjectSoundfont() {
+        val currentProject = _activeProject.value ?: return
+        val updated = currentProject.copy(
+            soundfontPath = "",
+            lastModified = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.updateProject(updated)
+            _activeProject.value = updated
+            synthesizer.loadSoundFont(null)
+            userNotification.emit("Đã chuyển về tổng hợp âm thanh mặc định")
+        }
+    }
+
+    fun importCustomMidiOrKar(uri: android.net.Uri) {
+        val context = getApplication<Application>()
+        val resolver = context.contentResolver
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                resolver.openInputStream(uri)?.use { input ->
+                    val result = MidiParser.parseMidiOrKar(input)
+                    if (result.notes.isEmpty() && result.syllables.isEmpty()) {
+                        userNotification.emit("File MIDI/KAR không hợp lệ hoặc không chứa dữ liệu nốt nhạc/lời bài hát.")
+                        return@launch
+                    }
+
+                    val currentProject = _activeProject.value
+                    if (currentProject != null) {
+                        val newSyllablesJson = if (result.syllables.isNotEmpty()) {
+                            JsonHelper.toJson(result.syllables)
+                        } else {
+                            currentProject.timedSyllablesJson
+                        }
+
+                        val newLyricsText = if (result.lyricsText.isNotBlank()) {
+                            result.lyricsText
+                        } else {
+                            currentProject.lyricsText
+                        }
+
+                        val newDuration = if (result.durationMs > 10000L) result.durationMs else currentProject.audioDurationMs
+
+                        val updatedProject = currentProject.copy(
+                            lyricsText = newLyricsText,
+                            timedSyllablesJson = newSyllablesJson,
+                            audioDurationMs = newDuration,
+                            lastModified = System.currentTimeMillis()
+                        )
+
+                        repository.updateProject(updatedProject)
+                        _activeProject.value = updatedProject
+                        if (result.notes.isNotEmpty()) {
+                            _midiNotes.value = result.notes
+                        }
+                        if (result.syllables.isNotEmpty()) {
+                            _syncedSyllables.value = result.syllables
+                        }
+                        parseLyricsToSyllablesQueue(newLyricsText)
+
+                        userNotification.emit("Đã nhập thành công file MIDI/KAR! (${result.notes.size} nốt nhạc, ${result.syllables.size} âm tiết)")
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                userNotification.emit("Lỗi khi nhập file MIDI/KAR: ${e.localizedMessage}")
+            }
         }
     }
 
@@ -217,6 +387,19 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                 customShadowColor.value = project.shadowColor
                 customShadowRadius.value = project.shadowRadius
                 customBackgroundType.value = project.backgroundType
+                customScreenPreset.value = project.screenPreset
+                customLayoutMode.value = project.layoutMode
+                customRow1Align.value = project.row1Align
+                customRow1OffsetY.value = project.row1OffsetY
+                customRow2Align.value = project.row2Align
+                customRow2OffsetY.value = project.row2OffsetY
+                customStepInMs.value = project.stepInMs
+                customStepOutMs.value = project.stepOutMs
+                customGlobalOffsetMs.value = project.globalOffsetMs
+                customEnableSignals.value = project.enableSignals
+                customSignalDotsCount.value = project.signalDotsCount
+                customSignalColor.value = project.signalColor
+                customSignalDurationMs.value = project.signalDurationMs
 
                 // Load appropriate backing track details
                 val matchedPreset = PresetSongs.SONGS.firstOrNull { it.title.equals(project.title, ignoreCase = true) }
@@ -229,6 +412,14 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                 // Parse queue from lyrics (for untimed editing)
                 parseLyricsToSyllablesQueue(project.lyricsText)
                 
+                // Load SoundFont if configured
+                if (project.soundfontPath.isNotEmpty()) {
+                    val sf2File = File(project.soundfontPath)
+                    if (sf2File.exists()) {
+                        synthesizer.loadSoundFont(sf2File)
+                    }
+                }
+
                 // Track start from beginning
                 seekTo(0L)
             }
@@ -275,6 +466,19 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                 shadowColor = customShadowColor.value,
                 shadowRadius = customShadowRadius.value,
                 backgroundType = customBackgroundType.value,
+                screenPreset = customScreenPreset.value,
+                layoutMode = customLayoutMode.value,
+                row1Align = customRow1Align.value,
+                row1OffsetY = customRow1OffsetY.value,
+                row2Align = customRow2Align.value,
+                row2OffsetY = customRow2OffsetY.value,
+                stepInMs = customStepInMs.value,
+                stepOutMs = customStepOutMs.value,
+                globalOffsetMs = customGlobalOffsetMs.value,
+                enableSignals = customEnableSignals.value,
+                signalDotsCount = customSignalDotsCount.value,
+                signalColor = customSignalColor.value,
+                signalDurationMs = customSignalDurationMs.value,
                 timedSyllablesJson = JsonHelper.toJson(_syncedSyllables.value)
             )
             repository.updateProject(updated)
@@ -657,8 +861,8 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
         var videoTrackIndex = -1
         var audioTrackIndex = -1
 
-        val width = 1280
-        val height = 720
+        val width = 1920
+        val height = 1080
         val fps = 20
         val frameDurationMs = 1000L / fps
         val totalFrames = videoDurationMs / frameDurationMs
@@ -682,10 +886,10 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
 
-            // Set up H264 video codec format
+            // Set up H264 video codec format in pristine 1080p
             val videoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-                setInteger(MediaFormat.KEY_BIT_RATE, 3000000) // 3.0 Mbps is pristine for 720p H.264
+                setInteger(MediaFormat.KEY_BIT_RATE, 8000000) // 8.0 Mbps for crisp 1080p
                 setInteger(MediaFormat.KEY_FRAME_RATE, fps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
@@ -697,19 +901,20 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
             val bufferInfo = MediaCodec.BufferInfo()
             val timeoutUs = 5000L
 
-            // Style configuration matching current VM/custom settings scaled up for 720p HD
+            // Proportional and customized scale calculations matching live simulation perfectly
+            val scaleFactor = height.toFloat() / 360f
             val fontName = customFontName.value
-            val fontSize = 48f // Scaled from 24f for 720p height
+            val fontSize = customFontSize.value * scaleFactor
             val colorIdle = customTextColorIdle.value.toInt()
             val colorActive = customTextColorActive.value.toInt()
             val strokeColor = customStrokeColor.value.toInt()
-            val strokeWidth = 10f // Scaled from 5f
+            val strokeWidth = customStrokeWidth.value * scaleFactor
             val shadowColor = customShadowColor.value.toInt()
-            val shadowRadius = 8f  // Scaled from 4f
+            val shadowRadius = customShadowRadius.value * scaleFactor
             val bgType = customBackgroundType.value
 
             var customTypeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            if (fontName != "SansSerif" && fontName != "Serif" && fontName != "Monospace") {
+            if (fontName != "SansSerif" && fontName != "Serif" && fontName != "Monospace" && fontName != "Default") {
                 val fontDir = getApplication<Application>().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
                 if (fontDir != null) {
                     val ttfFile = File(fontDir, fontName)
@@ -765,15 +970,18 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
 
-                // 2. Draw Lyrics Subtitles Overlay (Scaled up coordinates for 720p HD)
+                // 2. Draw Lyrics Subtitles Overlay (Scaled and positioned bottom-aligned)
                 if (allLineIndexes.isNotEmpty()) {
                     var currentLineIdx = allLineIndexes.firstOrNull { idx ->
                         val syls = linesMap[idx] ?: emptyList()
-                        val lineStart = syls.firstOrNull()?.startTimeMs ?: 0L
-                        val nextIdx = allLineIndexes.getOrNull(allLineIndexes.indexOf(idx) + 1)
-                        val nextStart = nextIdx?.let { linesMap[it]?.firstOrNull()?.startTimeMs } ?: Long.MAX_VALUE
-                        currentTimeMs >= lineStart && currentTimeMs < nextStart
-                    } ?: allLineIndexes.firstOrNull() ?: 0
+                        val lineStart = syls.minOfOrNull { it.startTimeMs } ?: 0L
+                        val lineEnd = syls.maxOfOrNull { it.endTimeMs } ?: 0L
+                        currentTimeMs >= lineStart && currentTimeMs <= lineEnd
+                    } ?: allLineIndexes.firstOrNull { idx ->
+                        val syls = linesMap[idx] ?: emptyList()
+                        val lineStart = syls.minOfOrNull { it.startTimeMs } ?: 0L
+                        currentTimeMs < lineStart
+                    } ?: allLineIndexes.lastOrNull() ?: 0
 
                     val evenLineIdx = if (currentLineIdx % 2 == 0) currentLineIdx else (currentLineIdx + 1)
                     val oddLineIdx = if (currentLineIdx % 2 == 0) (currentLineIdx + 1) else currentLineIdx
@@ -784,17 +992,21 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                     val padPrep = 3000L
                     val padPost = 2500L
 
-                    // Even Row
+                    val paddingX = 40f * scaleFactor
+                    val row2Y = height.toFloat() - (55f * scaleFactor)
+                    val row1Y = row2Y - (fontSize * 1.35f)
+
+                    // Even Row (Top row, aligned left)
                     if (evenSyllables != null) {
                         val firstStart = evenSyllables.firstOrNull()?.startTimeMs ?: 0L
                         val lastEnd = evenSyllables.lastOrNull()?.endTimeMs ?: 0L
                         if (currentTimeMs >= (firstStart - padPrep) && currentTimeMs <= (lastEnd + padPost)) {
-                            drawSyllablesLine(canvas, evenSyllables, currentTimeMs, 80f, 280f, fontSize,
+                            drawSyllablesLine(canvas, evenSyllables, currentTimeMs, paddingX, row1Y, fontSize,
                                 colorIdle, colorActive, strokeColor, strokeWidth, shadowColor, shadowRadius, customTypeface)
                         }
                     }
 
-                    // Odd Row
+                    // Odd Row (Bottom row, aligned right)
                     if (oddSyllables != null) {
                         val firstStart = oddSyllables.firstOrNull()?.startTimeMs ?: 0L
                         val lastEnd = oddSyllables.lastOrNull()?.endTimeMs ?: 0L
@@ -805,8 +1017,8 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                             }
                             var totalWidth = 0f
                             oddSyllables.forEach { totalWidth += linePaint.measureText(it.text + " ") }
-                            val startX = (width.toFloat() - 80f) - totalWidth
-                            drawSyllablesLine(canvas, oddSyllables, currentTimeMs, Math.max(80f, startX), 500f, fontSize,
+                            val startX = (width.toFloat() - paddingX) - totalWidth
+                            drawSyllablesLine(canvas, oddSyllables, currentTimeMs, Math.max(paddingX, startX), row2Y, fontSize,
                                 colorIdle, colorActive, strokeColor, strokeWidth, shadowColor, shadowRadius, customTypeface)
                         }
                     }

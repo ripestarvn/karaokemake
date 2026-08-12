@@ -24,7 +24,21 @@ data class KaraokeProject(
     val strokeColor: Long = 4278190080L, // Black (0xFF000000)
     val strokeWidth: Float = 6f,
     val shadowColor: Long = 2281701376L, // Semi-trans Black (0x88000000)
-    val shadowRadius: Float = 6f
+    val shadowRadius: Float = 6f,
+    val soundfontPath: String = "",
+    val screenPreset: String = "HDV 1080 (1920x1080)",
+    val layoutMode: String = "Two Rows", // "Two Rows", "One Row", "Centered"
+    val row1Align: String = "Left", // "Left", "Center", "Right"
+    val row1OffsetY: Float = 0f,
+    val row2Align: String = "Right", // "Left", "Center", "Right"
+    val row2OffsetY: Float = 0f,
+    val stepInMs: Long = 2000L, // Step In lead-in time (msec)
+    val stepOutMs: Long = 2000L, // Step Out lead-out time (msec)
+    val globalOffsetMs: Long = 0L, // Global sync offset shift (msec)
+    val enableSignals: Boolean = true, // Countdown signal dots before line
+    val signalDotsCount: Int = 4, // Number of countdown dots
+    val signalColor: Long = 4278190335L, // Blue (0xFF0000FF)
+    val signalDurationMs: Long = 4000L // Countdown duration (4000ms)
 )
 
 data class TimedSyllable(
