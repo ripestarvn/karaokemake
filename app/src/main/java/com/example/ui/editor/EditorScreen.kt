@@ -44,6 +44,10 @@ import com.example.data.KaraokeProject
 import com.example.data.PresetSongs
 import com.example.data.TimedSyllable
 import com.example.viewmodel.KaraokeViewModel
+import com.example.viewmodel.SyllableToSync
+import android.content.Context
+import androidx.activity.result.ActivityResultLauncher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -544,7 +548,7 @@ fun EditorScreen(
                         }
                     }
 
-                    "lời bài hát" -> {
+                    "Đồng bộ" -> {
                         // Recording / Synchronization Panel featuring the BIG RED 3D BUTTON!
                         Column(
                             modifier = Modifier.fillMaxSize(),
@@ -682,7 +686,7 @@ fun EditorScreen(
                         }
                     }
 
-                    "Nhập âm thanh" -> {
+                    "Âm thanh" -> {
                         val importedSoundfonts = viewModel.importedSoundfontPaths
 
                         LazyColumn(
@@ -1914,4 +1918,893 @@ fun formatTimeCode(ms: Long): String {
     val secs = (ms % 60000) / 1000
     val frames = (ms % 1000) / 10
     return String.format("%02d:%02d:%02d", mins, secs, frames)
+}
+
+@Composable
+fun NhapLoiTab(
+    activeProject: KaraokeProject?,
+    viewModel: KaraokeViewModel,
+    scope: CoroutineScope
+) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text("Nhập lời gốc bài hát:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        OutlinedTextField(
+            value = activeProject?.lyricsText ?: "",
+            onValueChange = { newLyrics ->
+                activeProject?.let {
+                    viewModel.parseLyricsToSyllablesQueue(newLyrics)
+                    scope.launch {
+                        viewModel.saveActiveProject()
+                    }
+                }
+            },
+            textStyle = TextStyle(color = Color.White, fontSize = 11.sp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color.White,
+                unfocusedBorderColor = Color.Gray
+            )
+        )
+    }
+}
+
+@Composable
+fun DongBoTab(
+    syllablesQueue: List<SyllableToSync>,
+    currentSyncIndex: Int,
+    isPlaying: Boolean,
+    viewModel: KaraokeViewModel,
+    scope: CoroutineScope,
+    context: Context
+) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = "TRÌNH ĐỒNG BỘ RHYTHM",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFFD0BCFF),
+            modifier = Modifier.align(Alignment.Start)
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                .padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            val nextSyllable = syllablesQueue.getOrNull(currentSyncIndex)
+            Text("Từ đang chờ đồng bộ:", fontSize = 10.sp, color = Color.LightGray)
+            Text(
+                text = nextSyllable?.text ?: "[ Đã đồng bộ hết ]",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Black,
+                color = if (nextSyllable != null) Color.Green else Color.Gray,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "Tiến trình: ${currentSyncIndex}/${syllablesQueue.size} từ",
+                fontSize = 11.sp,
+                color = Color.White
+            )
+        }
+
+        var isClicked by remember { mutableStateOf(false) }
+        val scale by animateFloatAsState(if (isClicked) 0.85f else 1f)
+
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    if (isPlaying) {
+                        viewModel.tapSyncSyllable()
+                        isClicked = true
+                        scope.launch {
+                            delay(80)
+                            isClicked = false
+                        }
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Hãy bấm phát nhạc trước khi đồng bộ!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                .testTag("big_red_sync_button"),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(130.dp)
+                    .background(Color(0xFF5E0B0B), CircleShape)
+            )
+            Box(
+                modifier = Modifier
+                    .size(126.dp)
+                    .offset(y = 4.dp)
+                    .background(Color(0xFF8C0E0E), CircleShape)
+            )
+            Box(
+                modifier = Modifier
+                    .size(118.dp)
+                    .offset(y = if (isClicked) 4.dp else 0.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color(0xFFFF5252), Color(0xFFDD2C00))
+                        ),
+                        shape = CircleShape
+                    )
+                    .border(2.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "BẤM THEO\nNHỊP",
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+
+        Text(
+            "Nhấn nút Đỏ theo nhịp nhạc để đồng bộ chữ vào timeline",
+            fontSize = 10.sp,
+            color = Color.LightGray,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = { viewModel.resetSynchronization() },
+                border = BorderStroke(1.dp, Color.Red),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Reset Đồng Bộ", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun AmThanhTab(
+    activeProject: KaraokeProject?,
+    viewModel: KaraokeViewModel,
+    onPickMidi: () -> Unit,
+    onPickAudio: () -> Unit,
+    onPickSoundfont: () -> Unit
+) {
+    val importedSoundfonts = viewModel.importedSoundfontPaths
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Text("Nguồn Nhạc Đang Dùng:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.3f)),
+                border = BorderStroke(1.dp, Color.Gray),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Audio track", tint = Color.Green)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        val displayName = activeProject?.audioFileName?.let { name ->
+                            if (name.contains("/")) {
+                                File(name).name
+                            } else {
+                                name
+                            }
+                        } ?: "Sample MIDI backing file"
+                        Text(displayName, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        val minutes = (activeProject?.audioDurationMs ?: 180000L) / 60000
+                        val seconds = ((activeProject?.audioDurationMs ?: 180000L) % 60000) / 1000
+                        Text("Thời lượng: ${minutes}p ${seconds}s", color = Color.LightGray, fontSize = 10.sp)
+                    }
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = onPickMidi,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFFF9500),
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(40.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Add, contentDescription = "Import MIDI KAR", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("NHẬP FILE MIDI / KAR (.mid, .kar)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = onPickAudio,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFD0BCFF),
+                    contentColor = Color(0xFF381E72)
+                ),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(40.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Add, contentDescription = "Import Audio", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("NHẬP ÂM THANH MỚI (.mp3, .wav)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(4.dp))
+            Button(
+                onClick = onPickSoundfont,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF34C759),
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(40.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Add, contentDescription = "Import SoundFont", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("NHẬP SOUNDFONT MỚI (.sf2)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        item {
+            Divider(color = Color.LightGray.copy(alpha = 0.1f))
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Nguồn Nhạc Cụ MIDI (SoundFont):", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD0BCFF))
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+
+        item {
+            val isSelected = activeProject?.soundfontPath.isNullOrEmpty()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        if (isSelected) Color(0xFFD0BCFF).copy(alpha = 0.2f) else Color.Transparent,
+                        RoundedCornerShape(4.dp)
+                    )
+                    .clickable { viewModel.resetProjectSoundfont() }
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = isSelected,
+                    onClick = { viewModel.resetProjectSoundfont() },
+                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFD0BCFF))
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Hệ Thống Giả Lập Mặc Định", color = Color.White, fontSize = 11.sp)
+            }
+        }
+
+        items(importedSoundfonts) { file ->
+            val isSelected = activeProject?.soundfontPath == file.absolutePath
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        if (isSelected) Color(0xFFD0BCFF).copy(alpha = 0.2f) else Color.Transparent,
+                        RoundedCornerShape(4.dp)
+                    )
+                    .clickable { viewModel.selectProjectSoundfont(file) }
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = isSelected,
+                    onClick = { viewModel.selectProjectSoundfont(file) },
+                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFD0BCFF))
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(file.name, color = Color.White, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun LayoutAndTimeTab(
+    viewModel: KaraokeViewModel,
+    scope: CoroutineScope
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Text("CẤU HÌNH MÀN HÌNH (SCREEN PRESET)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD0BCFF))
+            Spacer(modifier = Modifier.height(4.dp))
+            val presets = listOf("HDV 1080 (1920x1080)", "720p HD (1280x720)", "Shorts 9:16 (1080x1920)", "4K UHD (3840x2160)")
+            val currentPreset = viewModel.customScreenPreset.collectAsState().value
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                presets.forEach { preset ->
+                    val isSel = preset == currentPreset
+                    Card(
+                        modifier = Modifier.clickable {
+                            viewModel.customScreenPreset.value = preset
+                            scope.launch { viewModel.saveActiveProject() }
+                        },
+                        border = BorderStroke(1.dp, if (isSel) Color(0xFFD0BCFF) else Color.Gray),
+                        colors = CardDefaults.cardColors(containerColor = if (isSel) Color(0xFFD0BCFF).copy(alpha = 0.25f) else Color.Transparent)
+                    ) {
+                        Text(preset, color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
+                    }
+                }
+            }
+        }
+
+        item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+        item {
+            Text("CHẾ ĐỘ BỐ CỤC (LAYOUT MODE)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD0BCFF))
+            Spacer(modifier = Modifier.height(4.dp))
+            val modes = listOf("Two Rows" to "2 Hàng Karaoke", "One Row" to "1 Hàng Đơn", "Centered" to "Căn Giữa 2 Hàng")
+            val currentMode = viewModel.customLayoutMode.collectAsState().value
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                modes.forEach { (modeKey, modeLabel) ->
+                    val isSel = modeKey == currentMode
+                    Card(
+                        modifier = Modifier.weight(1f).clickable {
+                            viewModel.customLayoutMode.value = modeKey
+                            scope.launch { viewModel.saveActiveProject() }
+                        },
+                        border = BorderStroke(1.dp, if (isSel) Color(0xFFD0BCFF) else Color.Gray),
+                        colors = CardDefaults.cardColors(containerColor = if (isSel) Color(0xFFD0BCFF).copy(alpha = 0.25f) else Color.Transparent)
+                    ) {
+                        Text(modeLabel, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                    }
+                }
+            }
+        }
+
+        item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+        item {
+            Text("HÀNG 1 (CÂU LẺ/TOP ROW)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(4.dp))
+            val aligns = listOf("Left" to "Căn Trái", "Center" to "Căn Giữa", "Right" to "Căn Phải")
+            val currentR1Align = viewModel.customRow1Align.collectAsState().value
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                aligns.forEach { (k, label) ->
+                    val isSel = k == currentR1Align
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(if (isSel) Color(0xFFD0BCFF) else Color.DarkGray, RoundedCornerShape(4.dp))
+                            .clickable {
+                                viewModel.customRow1Align.value = k
+                                scope.launch { viewModel.saveActiveProject() }
+                            }
+                            .padding(vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(label, color = if (isSel) Color.Black else Color.White, fontSize = 9.sp)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            val r1Y = viewModel.customRow1OffsetY.collectAsState().value
+            Text("Vị trí Dọc (Offset Y): ${r1Y.toInt()} dp", fontSize = 10.sp, color = Color.LightGray)
+            Slider(
+                value = r1Y,
+                onValueChange = {
+                    viewModel.customRow1OffsetY.value = it
+                    scope.launch { viewModel.saveActiveProject() }
+                },
+                valueRange = -60f..60f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFFD0BCFF), activeTrackColor = Color(0xFFD0BCFF))
+            )
+        }
+
+        item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+        item {
+            Text("HÀNG 2 (CÂU CHẴN/BOTTOM ROW)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(4.dp))
+            val aligns = listOf("Left" to "Căn Trái", "Center" to "Căn Giữa", "Right" to "Căn Phải")
+            val currentR2Align = viewModel.customRow2Align.collectAsState().value
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                aligns.forEach { (k, label) ->
+                    val isSel = k == currentR2Align
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(if (isSel) Color(0xFFD0BCFF) else Color.DarkGray, RoundedCornerShape(4.dp))
+                            .clickable {
+                                viewModel.customRow2Align.value = k
+                                scope.launch { viewModel.saveActiveProject() }
+                            }
+                            .padding(vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(label, color = if (isSel) Color.Black else Color.White, fontSize = 9.sp)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            val r2Y = viewModel.customRow2OffsetY.collectAsState().value
+            Text("Vị trí Dọc (Offset Y): ${r2Y.toInt()} dp", fontSize = 10.sp, color = Color.LightGray)
+            Slider(
+                value = r2Y,
+                onValueChange = {
+                    viewModel.customRow2OffsetY.value = it
+                    scope.launch { viewModel.saveActiveProject() }
+                },
+                valueRange = -60f..60f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFFD0BCFF), activeTrackColor = Color(0xFFD0BCFF))
+            )
+        }
+
+        item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+        item {
+            Text("CĂN CHỈNH THỜI GIAN HÁT (TIME SYNC)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD0BCFF))
+            Spacer(modifier = Modifier.height(4.dp))
+            val stepIn = viewModel.customStepInMs.collectAsState().value
+            Text("Step In (Chuẩn bị hát): ${stepIn} ms", fontSize = 10.sp, color = Color.White)
+            Slider(
+                value = stepIn.toFloat(),
+                onValueChange = {
+                    viewModel.customStepInMs.value = it.toLong()
+                    scope.launch { viewModel.saveActiveProject() }
+                },
+                valueRange = 500f..5000f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFFD0BCFF), activeTrackColor = Color(0xFFD0BCFF))
+            )
+
+            val stepOut = viewModel.customStepOutMs.collectAsState().value
+            Text("Step Out (Giữ câu hát): ${stepOut} ms", fontSize = 10.sp, color = Color.White)
+            Slider(
+                value = stepOut.toFloat(),
+                onValueChange = {
+                    viewModel.customStepOutMs.value = it.toLong()
+                    scope.launch { viewModel.saveActiveProject() }
+                },
+                valueRange = 500f..5000f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFFD0BCFF), activeTrackColor = Color(0xFFD0BCFF))
+            )
+
+            val offset = viewModel.customGlobalOffsetMs.collectAsState().value
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Bù trừ nhịp toàn bài: ${offset} ms", fontSize = 10.sp, color = Color.White)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = {
+                            viewModel.customGlobalOffsetMs.value = offset - 100L
+                            scope.launch { viewModel.saveActiveProject() }
+                        },
+                        modifier = Modifier.height(28.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) { Text("-100ms", fontSize = 8.sp) }
+                    Button(
+                        onClick = {
+                            viewModel.customGlobalOffsetMs.value = offset + 100L
+                            scope.launch { viewModel.saveActiveProject() }
+                        },
+                        modifier = Modifier.height(28.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) { Text("+100ms", fontSize = 8.sp) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TuyBienTab(
+    viewModel: KaraokeViewModel,
+    scope: CoroutineScope
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Text("TÍN HIỆU ĐẾM NGƯỢC RHYTHM (SIGNALS)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD0BCFF))
+            Spacer(modifier = Modifier.height(4.dp))
+            val enableSig = viewModel.customEnableSignals.collectAsState().value
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Hiển thị 4 chấm đếm nhịp trước câu", fontSize = 10.sp, color = Color.White)
+                Switch(
+                    checked = enableSig,
+                    onCheckedChange = {
+                        viewModel.customEnableSignals.value = it
+                        scope.launch { viewModel.saveActiveProject() }
+                    },
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFD0BCFF))
+                )
+            }
+
+            if (enableSig) {
+                val sigDuration = viewModel.customSignalDurationMs.collectAsState().value
+                Text("Thời gian đếm ngược: ${sigDuration} ms", fontSize = 10.sp, color = Color.LightGray)
+                Slider(
+                    value = sigDuration.toFloat(),
+                    onValueChange = {
+                        viewModel.customSignalDurationMs.value = it.toLong()
+                        scope.launch { viewModel.saveActiveProject() }
+                    },
+                    valueRange = 1500f..6000f,
+                    colors = SliderDefaults.colors(thumbColor = Color(0xFFD0BCFF), activeTrackColor = Color(0xFFD0BCFF))
+                )
+
+                val dotsCount = viewModel.customSignalDotsCount.collectAsState().value
+                Text("Số chấm tín hiệu: ${dotsCount} chấm", fontSize = 10.sp, color = Color.LightGray)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(3, 4, 5).forEach { count ->
+                        val isSel = count == dotsCount
+                        Box(
+                            modifier = Modifier
+                                .background(if (isSel) Color(0xFFD0BCFF) else Color.DarkGray, RoundedCornerShape(4.dp))
+                                .clickable {
+                                    viewModel.customSignalDotsCount.value = count
+                                    scope.launch { viewModel.saveActiveProject() }
+                                }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("$count chấm", color = if (isSel) Color.Black else Color.White, fontSize = 9.sp)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Màu chấm sáng (Lit Color):", fontSize = 10.sp, color = Color.LightGray)
+                val sigColors = listOf(
+                    4278190335L to "Xanh Dương",
+                    4294967040L to "Vàng Brilliant",
+                    4294901760L to "Đỏ Chói",
+                    4278255360L to "Xanh Lá"
+                )
+                val activeSigColor = viewModel.customSignalColor.collectAsState().value
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    sigColors.forEach { (clrLong, name) ->
+                        val isSel = activeSigColor == clrLong
+                        Card(
+                            modifier = Modifier.clickable {
+                                viewModel.customSignalColor.value = clrLong
+                                scope.launch { viewModel.saveActiveProject() }
+                            },
+                            colors = CardDefaults.cardColors(containerColor = Color(clrLong)),
+                            border = BorderStroke(if (isSel) 2.dp else 0.dp, Color.White)
+                        ) {
+                            Text(name, color = if (clrLong == 4294967040L) Color.Black else Color.White, fontSize = 8.sp, modifier = Modifier.padding(6.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+        item {
+            Text("KIỂU CHỮ & CỠ CHỮ", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(4.dp))
+            val fonts = listOf("Default", "SansSerif", "Serif", "Monospace")
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                fonts.forEach { font ->
+                    val isSelected = font == viewModel.customFontName.collectAsState().value
+                    Card(
+                        modifier = Modifier.clickable {
+                            viewModel.customFontName.value = font
+                            scope.launch { viewModel.saveActiveProject() }
+                        },
+                        border = BorderStroke(1.dp, if (isSelected) Color(0xFFD0BCFF) else Color.Gray),
+                        colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFFDE1D1D).copy(alpha = 0.2f) else Color.Transparent)
+                    ) {
+                        Text(font, color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Kích Thước Chữ: ${viewModel.customFontSize.collectAsState().value.toInt()} sp", fontSize = 10.sp, color = Color.White)
+            Slider(
+                value = viewModel.customFontSize.collectAsState().value,
+                onValueChange = {
+                    viewModel.customFontSize.value = it
+                    scope.launch { viewModel.saveActiveProject() }
+                },
+                valueRange = 16f..42f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFFD0BCFF), activeTrackColor = Color(0xFFD0BCFF))
+            )
+        }
+
+        item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+        item {
+            Text("MÀU CHỮ HÁT & CHỜ (FILL COLOR)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text("Màu chữ đã hát (Active):", fontSize = 10.sp, color = Color.LightGray)
+            val activeColors = listOf(
+                0xFFFF3B30 to "Đỏ",
+                0xFFFFFF00 to "Vàng",
+                0xFF00FF00 to "Xanh Lá",
+                0xFF00FFFF to "Cyan",
+                0xFFFF00FF to "Hồng"
+            )
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                activeColors.forEach { (clr, label) ->
+                    val isSel = viewModel.customTextColorActive.collectAsState().value == clr
+                    Card(
+                        modifier = Modifier.clickable {
+                            viewModel.customTextColorActive.value = clr
+                            scope.launch { viewModel.saveActiveProject() }
+                        },
+                        colors = CardDefaults.cardColors(containerColor = Color(clr)),
+                        border = BorderStroke(if (isSel) 2.dp else 0.dp, Color.White)
+                    ) {
+                        Text(label, color = if (clr == 0xFFFFFF00) Color.Black else Color.White, fontSize = 8.sp, modifier = Modifier.padding(6.dp))
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Màu chữ chờ (Idle):", fontSize = 10.sp, color = Color.LightGray)
+            val idleColors = listOf(
+                0xFFFFFFFF to "Trắng",
+                0xFFAAAAAA to "Xám",
+                0xFFFFFFE0 to "Vàng Nhạt",
+                0xFFE0FFFF to "Cyan Nhạt"
+            )
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                idleColors.forEach { (clr, label) ->
+                    val isSel = viewModel.customTextColorIdle.collectAsState().value == clr
+                    Card(
+                        modifier = Modifier.clickable {
+                            viewModel.customTextColorIdle.value = clr
+                            scope.launch { viewModel.saveActiveProject() }
+                        },
+                        colors = CardDefaults.cardColors(containerColor = Color(clr)),
+                        border = BorderStroke(if (isSel) 2.dp else 0.dp, Color.White)
+                    ) {
+                        Text(label, color = if (clr == 0xFFFFFFFF || clr == 0xFFFFFFE0) Color.Black else Color.White, fontSize = 8.sp, modifier = Modifier.padding(6.dp))
+                    }
+                }
+            }
+        }
+
+        item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+        item {
+            Text("VIỀN & BÓNG CHỮ (STROKE & SHADOW)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(4.dp))
+            val strokeW = viewModel.customStrokeWidth.collectAsState().value
+            Text("Độ dày viền: ${strokeW.toInt()} px", fontSize = 10.sp, color = Color.White)
+            Slider(
+                value = strokeW,
+                onValueChange = {
+                    viewModel.customStrokeWidth.value = it
+                    scope.launch { viewModel.saveActiveProject() }
+                },
+                valueRange = 0f..12f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFFD0BCFF), activeTrackColor = Color(0xFFD0BCFF))
+            )
+
+            val shadowR = viewModel.customShadowRadius.collectAsState().value
+            Text("Độ lan bóng: ${shadowR.toInt()} px", fontSize = 10.sp, color = Color.White)
+            Slider(
+                value = shadowR,
+                onValueChange = {
+                    viewModel.customShadowRadius.value = it
+                    scope.launch { viewModel.saveActiveProject() }
+                },
+                valueRange = 0f..12f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFFD0BCFF), activeTrackColor = Color(0xFFD0BCFF))
+            )
+        }
+
+        item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+        item {
+            Text("NỀN VIDEO PREVIEW (BACKGROUND)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(4.dp))
+            val bgTypes = listOf("CHECKERBOARD" to "Caro Trong Suốt", "SOLID_GREEN" to "Phông Xanh (Key)", "BLACK" to "Đen Tuyền", "GRADIENT" to "Gradient Tím")
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                bgTypes.forEach { (bgKey, bgLabel) ->
+                    val isSelected = bgKey == viewModel.customBackgroundType.collectAsState().value
+                    Card(
+                        modifier = Modifier.clickable {
+                            viewModel.customBackgroundType.value = bgKey
+                            scope.launch { viewModel.saveActiveProject() }
+                        },
+                        border = BorderStroke(1.dp, if (isSelected) Color(0xFFD0BCFF) else Color.Gray),
+                        colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFFDE1D1D).copy(alpha = 0.2f) else Color.Transparent)
+                    ) {
+                        Text(bgLabel, color = Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun XuatTab(
+    syncedSyllables: List<TimedSyllable>,
+    viewModel: KaraokeViewModel,
+    scope: CoroutineScope,
+    context: Context,
+    onStartExport: (String) -> Unit,
+    onUpdateProgress: (Float) -> Unit,
+    onExportComplete: (String?) -> Unit
+) {
+    var fps by remember { mutableStateOf("60") }
+    var resolution by remember { mutableStateOf("1080p") }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("CÀI ĐẶT VIDEO ĐẦU RA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD0BCFF))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Fps:", fontSize = 10.sp, color = Color.LightGray)
+                Row {
+                    listOf("30", "60").forEach { item ->
+                        val isSel = item == fps
+                        Box(
+                            modifier = Modifier
+                                .background(if (isSel) Color(0xFFD0BCFF) else Color.DarkGray, RoundedCornerShape(4.dp))
+                                .clickable { fps = item }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(item, color = Color.White, fontSize = 10.sp)
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Độ Phân Giải:", fontSize = 10.sp, color = Color.LightGray)
+                Row {
+                    listOf("1080p", "4K").forEach { item ->
+                        val isSel = item == resolution
+                        Box(
+                            modifier = Modifier
+                                .background(if (isSel) Color(0xFFD0BCFF) else Color.DarkGray, RoundedCornerShape(4.dp))
+                                .clickable { resolution = item }
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Text(item, color = Color.White, fontSize = 10.sp)
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                }
+            }
+        }
+
+        Divider(color = Color.LightGray.copy(alpha = 0.1f))
+
+        Button(
+            onClick = {
+                if (syncedSyllables.isEmpty()) {
+                    Toast.makeText(context, "Chưa có lời hát nào được đồng bộ!", Toast.LENGTH_SHORT).show()
+                    return@Button
+                }
+                onStartExport("SRT")
+                scope.launch {
+                    for (i in 1..10) {
+                        delay(100)
+                        onUpdateProgress(i / 10f)
+                    }
+                    val srtFile = viewModel.saveSrtFile()
+                    onExportComplete(srtFile?.absolutePath ?: "Thư mục Downloads")
+                }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Blue),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.List, contentDescription = "Srt", modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Xuất phụ đề SRT chuyên nghiệp", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Button(
+            onClick = {
+                if (syncedSyllables.isEmpty()) {
+                    Toast.makeText(context, "Chưa có lời hát nào được đồng bộ!", Toast.LENGTH_SHORT).show()
+                    return@Button
+                }
+                onStartExport("MP4")
+                scope.launch {
+                    val progressJob = launch {
+                        viewModel.exportProgressFlow.collect { progress ->
+                            onUpdateProgress(progress)
+                        }
+                    }
+                    val mp4File = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        viewModel.saveMp4File()
+                    }
+                    progressJob.cancel()
+                    onUpdateProgress(1f)
+                    onExportComplete(mp4File?.absolutePath ?: "LỖI XUẤT PHIM")
+                    if (mp4File == null) {
+                        Toast.makeText(context, "Lỗi trích xuất định dạng MP4!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Đã xuất video karaoke thành công!", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD0BCFF), contentColor = Color(0xFF381E72)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PlayArrow, contentDescription = "Render", modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("XUẤT VIDEO KARAOKE MP4", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
 }
