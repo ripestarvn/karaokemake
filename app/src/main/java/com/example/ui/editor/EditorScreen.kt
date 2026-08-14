@@ -60,7 +60,7 @@ fun EditorScreen(
     val scope = rememberCoroutineScope()
 
     val midiPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: android.net.Uri? ->
         if (uri != null) {
             viewModel.importCustomMidiOrKar(uri)
@@ -68,7 +68,7 @@ fun EditorScreen(
     }
 
     val audioPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: android.net.Uri? ->
         if (uri != null) {
             viewModel.importCustomAudio(uri)
@@ -77,7 +77,7 @@ fun EditorScreen(
     }
 
     val soundfontPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: android.net.Uri? ->
         if (uri != null) {
             viewModel.importCustomSoundFont(uri)
@@ -520,31 +520,238 @@ fun EditorScreen(
             ) {
                 when (activeTab) {
                     "Nhập lời" -> {
+                        var localLyricsText by remember(activeProject?.lyricsText) {
+                            mutableStateOf(activeProject?.lyricsText ?: "")
+                        }
+                        var lyricsViewMode by remember { mutableStateOf("TEXT") }
+                        val lineCount = remember(localLyricsText) {
+                            if (localLyricsText.isBlank()) 0 else localLyricsText.lines().count { it.isNotBlank() }
+                        }
+                        val wordCount = remember(localLyricsText) {
+                            if (localLyricsText.isBlank()) 0 else localLyricsText.trim().split(Regex("\\s+")).count { it.isNotBlank() }
+                        }
+
                         Column(
                             modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("Nhập lời gốc bài hát:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            OutlinedTextField(
-                                value = activeProject?.lyricsText ?: "",
-                                onValueChange = { newLyrics ->
-                                    activeProject?.let {
-                                        viewModel.parseLyricsToSyllablesQueue(newLyrics)
-                                        // Save raw text to db
-                                        scope.launch {
-                                            viewModel.saveActiveProject()
+                            // Header bar with counters and submode
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "SOẠN THẢO LỜI BÀI HÁT",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFD0BCFF)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .background(Color(0xFF381E72), RoundedCornerShape(4.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            "$lineCount dòng • $wordCount từ",
+                                            color = Color(0xFFE8DEF8),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                                        .padding(2.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(if (lyricsViewMode == "TEXT") Color(0xFF6750A4) else Color.Transparent)
+                                            .clickable { lyricsViewMode = "TEXT" }
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text("Toàn Văn", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(if (lyricsViewMode == "LINES") Color(0xFF6750A4) else Color.Transparent)
+                                            .clickable { lyricsViewMode = "LINES" }
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text("Từng Dòng ($lineCount)", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+
+                            // Quick Action Toolbar
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        viewModel.updateLyricsText(localLyricsText)
+                                        Toast.makeText(context, "Đã lưu lời bài hát & phân tách từ!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759), contentColor = Color.White),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Done, contentDescription = "Lưu lời", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Lưu & Phân Tách Từ", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                        val clip = clipboard?.primaryClip
+                                        if (clip != null && clip.itemCount > 0) {
+                                            val text = clip.getItemAt(0).text?.toString() ?: ""
+                                            if (text.isNotEmpty()) {
+                                                val combined = if (localLyricsText.isBlank()) text else "$localLyricsText\n$text"
+                                                localLyricsText = combined
+                                                viewModel.updateLyricsText(combined)
+                                                Toast.makeText(context, "Đã dán lời từ bộ nhớ tạm!", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } else {
+                                            Toast.makeText(context, "Bộ nhớ tạm đang trống!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                    border = BorderStroke(1.dp, Color(0xFF6750A4)),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Dán", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Dán Lời", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.formatLyricsLines()
+                                        localLyricsText = activeProject?.lyricsText ?: localLyricsText
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD0BCFF)),
+                                    border = BorderStroke(1.dp, Color.Gray),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Build, contentDescription = "Chuẩn hóa", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Chuẩn Hóa", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Spacer(modifier = Modifier.weight(1f))
+
+                                OutlinedButton(
+                                    onClick = {
+                                        localLyricsText = ""
+                                        viewModel.clearLyrics()
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
+                                    border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.5f)),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Xóa hết", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Xóa Lời", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            if (lyricsViewMode == "TEXT") {
+                                OutlinedTextField(
+                                    value = localLyricsText,
+                                    onValueChange = { newLyrics ->
+                                        localLyricsText = newLyrics
+                                        viewModel.updateLyricsText(newLyrics)
+                                    },
+                                    placeholder = {
+                                        Text(
+                                            "Nhập hoặc dán lời bài hát tại đây...\n• Hỗ trợ bài hát dài từ 200 - 300+ dòng không giới hạn\n• Mỗi dòng là một câu hát trong Karaoke\n• Bấm 'Lưu & Phân Tách Từ' hoặc sang tab 'Đồng bộ' để bắt đầu gõ nhịp.",
+                                            color = Color.Gray,
+                                            fontSize = 11.sp
+                                        )
+                                    },
+                                    textStyle = TextStyle(
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        lineHeight = 17.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color(0xFFD0BCFF),
+                                        unfocusedBorderColor = Color.DarkGray,
+                                        focusedContainerColor = Color.Black.copy(alpha = 0.3f),
+                                        unfocusedContainerColor = Color.Black.copy(alpha = 0.2f)
+                                    ),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                            } else {
+                                val lines = localLyricsText.lines()
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                        .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(6.dp))
+                                        .padding(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    items(lines.size) { index ->
+                                        val line = lines[index]
+                                        val wordsInLine = line.trim().split(Regex("\\s+")).count { it.isNotBlank() }
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.4f)),
+                                            border = BorderStroke(0.5.dp, Color.DarkGray),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        .background(Color(0xFF6750A4), CircleShape),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text("${index + 1}", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = if (line.isBlank()) "[ Dòng trống ]" else line,
+                                                    color = if (line.isBlank()) Color.Gray else Color.White,
+                                                    fontSize = 11.sp,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Text(
+                                                    "$wordsInLine từ",
+                                                    color = Color.LightGray,
+                                                    fontSize = 9.sp
+                                                )
+                                            }
                                         }
                                     }
-                                },
-                                textStyle = TextStyle(color = Color.White, fontSize = 11.sp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = Color.White,
-                                    unfocusedBorderColor = Color.Gray
-                                )
-                            )
+                                }
+                            }
                         }
                     }
 
@@ -727,7 +934,7 @@ fun EditorScreen(
 
                             item {
                                 Button(
-                                    onClick = { midiPickerLauncher.launch("*/*") },
+                                    onClick = { midiPickerLauncher.launch(arrayOf("*/*")) },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Color(0xFFFF9500),
                                         contentColor = Color.White
@@ -745,7 +952,7 @@ fun EditorScreen(
 
                             item {
                                 Button(
-                                    onClick = { audioPickerLauncher.launch("audio/*") },
+                                    onClick = { audioPickerLauncher.launch(arrayOf("audio/*", "*/*")) },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Color(0xFFD0BCFF),
                                         contentColor = Color(0xFF381E72)
@@ -764,7 +971,7 @@ fun EditorScreen(
                             item {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Button(
-                                    onClick = { soundfontPickerLauncher.launch("*/*") },
+                                    onClick = { soundfontPickerLauncher.launch(arrayOf("*/*")) },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Color(0xFF34C759),
                                         contentColor = Color.White
@@ -1920,38 +2127,6 @@ fun formatTimeCode(ms: Long): String {
     return String.format("%02d:%02d:%02d", mins, secs, frames)
 }
 
-@Composable
-fun NhapLoiTab(
-    activeProject: KaraokeProject?,
-    viewModel: KaraokeViewModel,
-    scope: CoroutineScope
-) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text("Nhập lời gốc bài hát:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-        OutlinedTextField(
-            value = activeProject?.lyricsText ?: "",
-            onValueChange = { newLyrics ->
-                activeProject?.let {
-                    viewModel.parseLyricsToSyllablesQueue(newLyrics)
-                    scope.launch {
-                        viewModel.saveActiveProject()
-                    }
-                }
-            },
-            textStyle = TextStyle(color = Color.White, fontSize = 11.sp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Color.White,
-                unfocusedBorderColor = Color.Gray
-            )
-        )
-    }
-}
 
 @Composable
 fun DongBoTab(

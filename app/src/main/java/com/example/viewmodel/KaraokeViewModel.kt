@@ -237,48 +237,81 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
         val resolver = context.contentResolver
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                var displayName = "imported_midi_${System.currentTimeMillis()}"
+                val cursor = resolver.query(uri, null, null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex != -1) {
+                            val name = it.getString(nameIndex)
+                            if (!name.isNullOrEmpty()) {
+                                displayName = name
+                            }
+                        }
+                    }
+                }
+
+                val baseName = if (displayName.endsWith(".mid", true) || displayName.endsWith(".kar", true)) {
+                    displayName.substringBeforeLast(".")
+                } else {
+                    displayName
+                }
+
+                val destDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: return@launch
+                if (!destDir.exists()) destDir.mkdirs()
+                val destFile = File(destDir, "$baseName.mid")
+
                 resolver.openInputStream(uri)?.use { input ->
-                    val result = MidiParser.parseMidiOrKar(input)
-                    if (result.notes.isEmpty() && result.syllables.isEmpty()) {
-                        userNotification.emit("File MIDI/KAR không hợp lệ hoặc không chứa dữ liệu nốt nhạc/lời bài hát.")
-                        return@launch
+                    FileOutputStream(destFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                val result = destFile.inputStream().use { input ->
+                    MidiParser.parseMidiOrKar(input)
+                }
+
+                if (result.notes.isEmpty() && result.syllables.isEmpty()) {
+                    userNotification.emit("File MIDI/KAR không hợp lệ hoặc không chứa dữ liệu nốt nhạc/lời bài hát.")
+                    return@launch
+                }
+
+                val currentProject = _activeProject.value
+                if (currentProject != null) {
+                    val newSyllablesJson = if (result.syllables.isNotEmpty()) {
+                        JsonHelper.toJson(result.syllables)
+                    } else {
+                        currentProject.timedSyllablesJson
                     }
 
-                    val currentProject = _activeProject.value
-                    if (currentProject != null) {
-                        val newSyllablesJson = if (result.syllables.isNotEmpty()) {
-                            JsonHelper.toJson(result.syllables)
-                        } else {
-                            currentProject.timedSyllablesJson
-                        }
-
-                        val newLyricsText = if (result.lyricsText.isNotBlank()) {
-                            result.lyricsText
-                        } else {
-                            currentProject.lyricsText
-                        }
-
-                        val newDuration = if (result.durationMs > 10000L) result.durationMs else currentProject.audioDurationMs
-
-                        val updatedProject = currentProject.copy(
-                            lyricsText = newLyricsText,
-                            timedSyllablesJson = newSyllablesJson,
-                            audioDurationMs = newDuration,
-                            lastModified = System.currentTimeMillis()
-                        )
-
-                        repository.updateProject(updatedProject)
-                        _activeProject.value = updatedProject
-                        if (result.notes.isNotEmpty()) {
-                            _midiNotes.value = result.notes
-                        }
-                        if (result.syllables.isNotEmpty()) {
-                            _syncedSyllables.value = result.syllables
-                        }
-                        parseLyricsToSyllablesQueue(newLyricsText)
-
-                        userNotification.emit("Đã nhập thành công file MIDI/KAR! (${result.notes.size} nốt nhạc, ${result.syllables.size} âm tiết)")
+                    val newLyricsText = if (result.lyricsText.isNotBlank()) {
+                        result.lyricsText
+                    } else {
+                        currentProject.lyricsText
                     }
+
+                    val newDuration = if (result.durationMs > 10000L) result.durationMs else currentProject.audioDurationMs
+
+                    val updatedProject = currentProject.copy(
+                        audioFileName = destFile.absolutePath,
+                        lyricsText = newLyricsText,
+                        timedSyllablesJson = newSyllablesJson,
+                        audioDurationMs = newDuration,
+                        lastModified = System.currentTimeMillis()
+                    )
+
+                    repository.updateProject(updatedProject)
+                    _activeProject.value = updatedProject
+                    if (result.notes.isNotEmpty()) {
+                        _midiNotes.value = result.notes
+                    }
+                    if (result.syllables.isNotEmpty()) {
+                        _syncedSyllables.value = result.syllables
+                    }
+                    parseLyricsToSyllablesQueue(newLyricsText)
+                    seekTo(0L)
+
+                    userNotification.emit("Đã nhập thành công file MIDI/KAR! (${result.notes.size} nốt nhạc, ${result.syllables.size} âm tiết)")
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -456,6 +489,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
         val proj = _activeProject.value ?: return
         viewModelScope.launch {
             val updated = proj.copy(
+                lyricsText = _activeProject.value?.lyricsText ?: proj.lyricsText,
                 lastModified = System.currentTimeMillis(),
                 fontName = customFontName.value,
                 fontSize = customFontSize.value,
@@ -486,6 +520,47 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun updateLyricsText(newLyrics: String) {
+        val currentProject = _activeProject.value ?: return
+        val updated = currentProject.copy(
+            lyricsText = newLyrics,
+            lastModified = System.currentTimeMillis()
+        )
+        _activeProject.value = updated
+        parseLyricsToSyllablesQueue(newLyrics)
+        viewModelScope.launch {
+            repository.updateProject(updated)
+        }
+    }
+
+    fun formatLyricsLines() {
+        val currentProject = _activeProject.value ?: return
+        val lines = currentProject.lyricsText.lines()
+        val formattedLines = mutableListOf<String>()
+        for (line in lines) {
+            val trimmed = line.trim().replace("\\s+".toRegex(), " ")
+            if (trimmed.isNotEmpty()) {
+                val capitalized = trimmed.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+                formattedLines.add(capitalized)
+            }
+        }
+        val result = formattedLines.joinToString("\n")
+        updateLyricsText(result)
+        viewModelScope.launch {
+            userNotification.emit("Đã chuẩn hóa và căn chỉnh ${formattedLines.size} dòng lời bài hát!")
+        }
+    }
+
+    fun clearLyrics() {
+        updateLyricsText("")
+        _syncedSyllables.value = emptyList()
+        _currentSyncQueueIndex.value = 0
+        saveActiveProject()
+        viewModelScope.launch {
+            userNotification.emit("Đã xóa trắng phần lời bài hát!")
+        }
+    }
+
     // Playback Controls
     fun togglePlayback() {
         if (_isPlaying.value) {
@@ -509,17 +584,21 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
             var lastTickSystemTime = System.currentTimeMillis()
             while (isActive && _isPlaying.value) {
                 delay(16) // roughly 60 fps
-                val now = System.currentTimeMillis()
-                val delta = (now - lastTickSystemTime) * _playbackSpeed.value
-                lastTickSystemTime = now
+                val currentMpPos = synthesizer.getCurrentPosition()
+                val nextPos = if (currentMpPos != null && hasCustomAudio && currentMpPos > 0L) {
+                    currentMpPos
+                } else {
+                    val now = System.currentTimeMillis()
+                    val delta = (now - lastTickSystemTime) * _playbackSpeed.value
+                    lastTickSystemTime = now
+                    _playPositionMs.value + delta.toLong()
+                }
 
-                val nextPos = _playPositionMs.value + delta.toLong()
                 if (nextPos >= duration) {
                     _playPositionMs.value = duration
                     stopPlayback()
                 } else {
                     _playPositionMs.value = nextPos
-                    synthesizer.updatePosition(nextPos)
                 }
             }
         }
@@ -536,7 +615,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
         val duration = _activeProject.value?.audioDurationMs ?: 180000L
         val bounded = timeMs.coerceIn(0L, duration)
         _playPositionMs.value = bounded
-        synthesizer.updatePosition(bounded)
+        synthesizer.seekTo(bounded)
     }
 
     fun setSpeed(speed: Float) {

@@ -285,7 +285,7 @@ object MidiParser {
                             } else {
                                 // Velocity 0 = Note Off
                                 val startTick = activeNotes[channel].remove(pitch)
-                                if (startTick != null) {
+                                if (startTick != null && channel != 9) {
                                     val startMs = tickToMs(startTick)
                                     val endMs = tickToMs(currentTick)
                                     val dur = (endMs - startMs).coerceAtLeast(50L)
@@ -299,7 +299,7 @@ object MidiParser {
                             val pitch = trackData[pos].toInt() and 0xFF
                             pos += 2
                             val startTick = activeNotes[channel].remove(pitch)
-                            if (startTick != null) {
+                            if (startTick != null && channel != 9) {
                                 val startMs = tickToMs(startTick)
                                 val endMs = tickToMs(currentTick)
                                 val dur = (endMs - startMs).coerceAtLeast(50L)

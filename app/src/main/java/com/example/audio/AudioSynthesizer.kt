@@ -314,16 +314,22 @@ class AudioSynthesizer {
         }
     }
 
-    fun updatePosition(timeMs: Long) {
+    fun seekTo(timeMs: Long) {
         playPositionMs = timeMs
         mediaPlayer?.let { mp ->
             try {
-                if (Math.abs(mp.currentPosition - timeMs) > 150) {
-                    mp.seekTo(timeMs.toInt())
-                }
+                mp.seekTo(timeMs.toInt())
             } catch (e: Exception) {
                 e.printStackTrace()
             }
+        }
+    }
+
+    fun getCurrentPosition(): Long? {
+        return try {
+            mediaPlayer?.currentPosition?.toLong()
+        } catch (e: Exception) {
+            null
         }
     }
 
