@@ -43,10 +43,13 @@ import java.io.File
 import com.example.data.KaraokeProject
 import com.example.data.PresetSongs
 import com.example.data.TimedSyllable
+import com.example.ui.settings.AppSettings
+import com.example.ui.util.Localization
 import com.example.viewmodel.KaraokeViewModel
 import com.example.viewmodel.SyllableToSync
 import android.content.Context
 import androidx.activity.result.ActivityResultLauncher
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -54,6 +57,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun EditorScreen(
     viewModel: KaraokeViewModel,
+    appSettings: AppSettings,
+    onOpenSettings: () -> Unit,
+    onOpenUsageNotes: () -> Unit,
     onBackToHome: () -> Unit
 ) {
     val context = LocalContext.current
@@ -111,10 +117,13 @@ fun EditorScreen(
 
     val ch1Wave by viewModel.channel1Wave.collectAsState()
     val ch2Wave by viewModel.channel2Wave.collectAsState()
+    val midiNotes by viewModel.midiNotes.collectAsState()
+    val currentLang by appSettings.language.collectAsState()
+    val showWaveform by appSettings.showWaveform.collectAsState()
 
     // Tab categories
-    var activeTab by remember { mutableStateOf("Đồng bộ") }
-    val tabs = listOf("Nhập lời", "Đồng bộ", "Âm thanh", "Layout & Thời gian", "Tùy biến", "Xuất")
+    val tabs = listOf("tab_lyrics", "tab_sync", "tab_audio", "tab_layout", "tab_export")
+    var activeTab by remember { mutableStateOf("tab_sync") }
 
     // Export dialog triggers
     var exportingState by remember { mutableStateOf<String?>(null) } // "SRT", "MP4"
@@ -227,9 +236,9 @@ fun EditorScreen(
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Quay lại", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(Localization.get("back", currentLang), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -245,6 +254,33 @@ fun EditorScreen(
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = onOpenUsageNotes,
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = Color.Black.copy(alpha = 0.6f),
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.Info, contentDescription = "Usage Notes", modifier = Modifier.size(16.dp))
+                        }
+
+                        IconButton(
+                            onClick = onOpenSettings,
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = Color.Black.copy(alpha = 0.6f),
+                                contentColor = Color(0xFFD0BCFF)
+                            ),
+                            modifier = Modifier.size(32.dp).testTag("editor_settings_button")
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings", modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
             }
@@ -330,134 +366,23 @@ fun EditorScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 3. Multi-Track Timeline layout centering double channel audio waves (Bottom rows)
-            Box(
+            // 3. Stereo Waveform and Piano Roll Multi-Track Timeline
+            StereoWaveformTimeline(
+                activeProject = activeProject,
+                ch1Wave = ch1Wave,
+                ch2Wave = ch2Wave,
+                midiNotes = midiNotes,
+                syncedSyllables = syncedSyllables,
+                playPositionMs = playPositionMs,
+                onSeek = { viewModel.seekTo(it) },
+                onSelectSyllable = { selectedSyllableForEdit = it },
+                currentLang = currentLang,
+                showWaveform = showWaveform,
+                onToggleWaveform = { appSettings.setShowWaveform(!showWaveform) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(0.42f)
-                    .background(Color(0xFF141414), RoundedCornerShape(8.dp))
-                    .border(width = 1.dp, color = Color.DarkGray)
-            ) {
-                // Scrollable content representing synchronized tracks
-                Row(modifier = Modifier.fillMaxSize()) {
-                    // Static Left Side Labels Column (Music, T1, T2 Labels as seen in image 2)
-                    Column(
-                        modifier = Modifier
-                            .width(40.dp)
-                            .fillMaxHeight()
-                            .background(Color(0xFF232323))
-                            .drawBehind {
-                                drawLine(
-                                    color = Color.Black,
-                                    start = Offset(size.width, 0f),
-                                    end = Offset(size.width, size.height),
-                                    strokeWidth = density
-                                )
-                            },
-                        verticalArrangement = Arrangement.SpaceAround,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("🎵", fontSize = 14.sp)
-                        Text("T1", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Text("T2", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-
-                    // Horizontal Scrolling Timeline Content Area
-                    val scrollState = rememberScrollState()
-                    val pxPerSecond = 50f // density factor for horizontal scrolling representation
-                    val durationSeconds = (activeProject?.audioDurationMs ?: 180000L) / 1000f
-                    val totalTimelineWidth = (durationSeconds * pxPerSecond).dp
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .horizontalScroll(scrollState)
-                    ) {
-                        // Background Grid & Rule Markers
-                        Canvas(modifier = Modifier.fillMaxHeight().width(totalTimelineWidth)) {
-                            // Draw nice second division ticks and time markings
-                            val numTicks = durationSeconds.toInt()
-                            for (i in 0..numTicks step 2) {
-                                val x = i * pxPerSecond
-                                drawLine(
-                                    color = Color.DarkGray,
-                                    start = Offset(x, 0f),
-                                    end = Offset(x, size.height),
-                                    strokeWidth = 1f
-                                )
-                            }
-                        }
-
-                        // Playback track columns
-                        Column(
-                            modifier = Modifier
-                                .width(totalTimelineWidth)
-                                .fillMaxHeight(),
-                            verticalArrangement = Arrangement.SpaceAround
-                        ) {
-                            // Track 1: Dual Audio Waveform channels
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(36.dp)
-                                    .background(Color(0xFF0F1E29))
-                            ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val count = ch1Wave.size
-                                    if (count > 0) {
-                                        val stepX = size.width / count
-                                        val centerY = size.height / 2f
-                                        for (i in 0 until count) {
-                                            val x = i * stepX
-                                            val h1 = ch1Wave[i] * (centerY - 2)
-                                            val h2 = ch2Wave[i] * (centerY - 2)
-                                            // Channel 1 top
-                                            drawLine(
-                                                color = Color(0xFF00BCD4),
-                                                start = Offset(x, centerY - h1),
-                                                end = Offset(x, centerY),
-                                                strokeWidth = 2f
-                                            )
-                                            // Channel 2 bottom
-                                            drawLine(
-                                                color = Color(0xFF00E676),
-                                                start = Offset(x, centerY),
-                                                end = Offset(x, centerY + h2),
-                                                strokeWidth = 2f
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Track 2: Even Syllables Line 1 timeline
-                            TimelineTrack(
-                                syllables = syncedSyllables.filter { it.lineIndex % 2 == 0 },
-                                pxPerSecond = pxPerSecond,
-                                onSelectSyllable = { selectedSyllableForEdit = it }
-                            )
-
-                            // Track 3: Odd Syllables Line 2 timeline
-                            TimelineTrack(
-                                syllables = syncedSyllables.filter { it.lineIndex % 2 != 0 },
-                                pxPerSecond = pxPerSecond,
-                                onSelectSyllable = { selectedSyllableForEdit = it }
-                            )
-                        }
-
-                        // Interactive Timeline Yellow/Gold playhead line matches Image 3
-                        val playheadX = (playPositionMs / 1000f) * pxPerSecond
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .width(2.dp)
-                                .offset(x = playheadX.dp)
-                                .background(Color(0xFFD0BCFF))
-                        )
-                    }
-                }
-            }
+            )
         }
 
         // --- RIGHT COLUMN: Tab Sidebar Panels (30% Width) ---
@@ -483,11 +408,11 @@ fun EditorScreen(
                     .background(Color(0xFF1E1E20)),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                tabs.forEach { tab ->
-                    val isSelected = tab == activeTab
+                tabs.forEach { tabKey ->
+                    val isSelected = tabKey == activeTab
                     Box(
                         modifier = Modifier
-                            .clickable { activeTab = tab }
+                            .clickable { activeTab = tabKey }
                             .background(if (isSelected) Color(0xFF252528) else Color(0xFF1E1E20))
                             .drawBehind {
                                 if (isSelected) {
@@ -502,7 +427,7 @@ fun EditorScreen(
                             .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
                         Text(
-                            text = tab,
+                            text = Localization.get(tabKey, currentLang),
                             color = if (isSelected) Color.White else Color.Gray,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -519,7 +444,7 @@ fun EditorScreen(
                     .padding(12.dp)
             ) {
                 when (activeTab) {
-                    "Nhập lời" -> {
+                    "tab_lyrics" -> {
                         var localLyricsText by remember(activeProject?.lyricsText) {
                             mutableStateOf(activeProject?.lyricsText ?: "")
                         }
@@ -755,7 +680,7 @@ fun EditorScreen(
                         }
                     }
 
-                    "Đồng bộ" -> {
+                    "tab_sync" -> {
                         // Recording / Synchronization Panel featuring the BIG RED 3D BUTTON!
                         Column(
                             modifier = Modifier.fillMaxSize(),
@@ -779,24 +704,23 @@ fun EditorScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 val nextSyllable = syllablesQueue.getOrNull(currentSyncIndex)
-                                Text("Từ đang chờ đồng bộ:", fontSize = 10.sp, color = Color.LightGray)
+                                Text(Localization.get("waiting_word", currentLang), fontSize = 10.sp, color = Color.LightGray)
                                 Text(
-                                    text = nextSyllable?.text ?: "[ Đã đồng bộ hết ]",
+                                    text = nextSyllable?.text ?: "[ ${if (currentLang == Localization.Language.VN) "Đã đồng bộ hết" else "All Synced"} ]",
                                     fontSize = 24.sp,
                                     fontWeight = FontWeight.Black,
-                                    color = if (nextSyllable != null) Color.Green else Color.Gray,
+                                    color = if (nextSyllable != null) Color(0xFF4CAF50) else Color.Gray,
                                     textAlign = TextAlign.Center
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    "Tiến trình: ${currentSyncIndex}/${syllablesQueue.size} từ",
+                                    "${Localization.get("progress", currentLang)}: ${currentSyncIndex}/${syllablesQueue.size} ${Localization.get("words", currentLang)}",
                                     fontSize = 11.sp,
                                     color = Color.White
                                 )
                             }
 
                             // THE BIG RED 3D BUTTON! Matches Image 2 & 3.
-                            // Adds custom ripple and click sizing scale anims for tactile mashing behavior
                             var isClicked by remember { mutableStateOf(false) }
                             val scale by animateFloatAsState(if (isClicked) 0.85f else 1f)
 
@@ -818,7 +742,7 @@ fun EditorScreen(
                                             Toast
                                                 .makeText(
                                                     context,
-                                                    "Hãy bấm phát nhạc trước khi đồng bộ!",
+                                                    if (currentLang == Localization.Language.VN) "Hãy bấm phát nhạc trước khi đồng bộ!" else "Please press play before syncing!",
                                                     Toast.LENGTH_SHORT
                                                 )
                                                 .show()
@@ -827,7 +751,7 @@ fun EditorScreen(
                                     .testTag("big_red_sync_button"),
                                 contentAlignment = Alignment.Center
                             ) {
-                                // 3O bottom depth shadow layers
+                                // 3D bottom depth shadow layers
                                 Box(
                                     modifier = Modifier
                                         .size(130.dp)
@@ -857,7 +781,7 @@ fun EditorScreen(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            "BẤM THEO\nNHỊP",
+                                            Localization.get("tap_rhythm", currentLang),
                                             color = Color.White,
                                             fontWeight = FontWeight.ExtraBold,
                                             fontSize = 13.sp,
@@ -868,32 +792,59 @@ fun EditorScreen(
                             }
 
                             Text(
-                                "Nhấn nút Đỏ theo nhịp nhạc để đồng bộ chữ vào timeline",
+                                Localization.get("sync_hint", currentLang),
                                 fontSize = 10.sp,
                                 color = Color.LightGray,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(horizontal = 8.dp)
                             )
 
-                            // Sync utilities row
+                            // Sync utilities row (Undo 1 word + Reset)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                Button(
+                                    onClick = {
+                                        viewModel.undoLastSyncSyllable()
+                                        Toast.makeText(
+                                            context,
+                                            if (currentLang == Localization.Language.VN) "Đã lùi 1 từ & quay lại mốc thời gian!" else "Stepped back 1 word & timeline!",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6750A4),
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(1.2f).testTag("undo_sync_word_button")
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Undo", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = Localization.get("undo_word", currentLang),
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
                                 OutlinedButton(
                                     onClick = { viewModel.resetSynchronization() },
-                                    border = BorderStroke(1.dp, Color.Red),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
-                                    shape = RoundedCornerShape(4.dp),
-                                    modifier = Modifier.weight(1f)
+                                    border = BorderStroke(1.dp, Color(0xFFEF5350)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF5350)),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    modifier = Modifier.weight(0.8f)
                                 ) {
-                                    Text("Reset Đồng Bộ", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                    Text(if (currentLang == Localization.Language.VN) "Reset Tất Cả" else "Reset All", fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     }
 
-                    "Âm thanh" -> {
+                    "tab_audio" -> {
                         val importedSoundfonts = viewModel.importedSoundfontPaths
 
                         LazyColumn(
@@ -1044,7 +995,7 @@ fun EditorScreen(
                         }
                     }
 
-                    "Layout & Thời gian" -> {
+                    "tab_layout" -> {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1483,7 +1434,7 @@ fun EditorScreen(
                         }
                     }
 
-                    "Xuất" -> {
+                    "tab_export" -> {
                         // High resolution outputs configuration, srt alignment
                         var fps by remember { mutableStateOf("60") }
                         var resolution by remember { mutableStateOf("1080p") }

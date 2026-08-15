@@ -147,5 +147,6 @@ data class PresetSong(
 data class MidiNote(
     val pitch: Int,
     val startTimeMs: Long,
-    val durationMs: Long
+    val durationMs: Long,
+    val channel: Int = 0
 )

@@ -10,9 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,42 +24,72 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.KaraokeProject
 import com.example.data.PresetSongs
+import com.example.ui.settings.AppSettings
+import com.example.ui.util.Localization
 import java.text.SimpleDateFormat
 import java.util.*
 
 @Composable
-fun HomeHeader() {
+fun HomeHeader(
+    appSettings: AppSettings,
+    onOpenSettings: () -> Unit,
+    onOpenUsageNotes: () -> Unit
+) {
+    val currentLang by appSettings.language.collectAsState()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 20.dp),
+            .padding(horizontal = 6.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column {
             Text(
-                text = "KARAOKE STUDIO",
-                color = Color(0xFFD0BCFF),
+                text = Localization.get("app_title", currentLang),
+                color = MaterialTheme.colorScheme.primary,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "Trình làm Karaoke",
-                color = Color.White,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Light
+                text = Localization.get("app_subtitle", currentLang),
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.SemiBold
             )
         }
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .background(Color(0xFF49454F), CircleShape)
-                .border(1.dp, Color(0xFF938F99), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("🎤", fontSize = 20.sp)
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onOpenUsageNotes,
+                colors = IconButtonDefaults.iconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Usage Notes",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            IconButton(
+                onClick = onOpenSettings,
+                colors = IconButtonDefaults.iconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.testTag("home_settings_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Settings",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }
@@ -70,14 +98,18 @@ fun HomeHeader() {
 @Composable
 fun HomeScreen(
     projects: List<KaraokeProject>,
+    appSettings: AppSettings,
+    onOpenSettings: () -> Unit,
+    onOpenUsageNotes: () -> Unit,
     onCreateProject: (String, String, String, com.example.data.PresetSong?) -> Unit,
     onEditProject: (Int) -> Unit,
     onDeleteProject: (Int) -> Unit
 ) {
+    val currentLang by appSettings.language.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
 
     Scaffold(
-        containerColor = Color(0xFF1C1B1F)
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -87,7 +119,11 @@ fun HomeScreen(
                 .padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            HomeHeader()
+            HomeHeader(
+                appSettings = appSettings,
+                onOpenSettings = onOpenSettings,
+                onOpenUsageNotes = onOpenUsageNotes
+            )
 
             // New Project Card (Hero)
             Card(
@@ -95,69 +131,71 @@ fun HomeScreen(
                     .fillMaxWidth()
                     .clickable { showCreateDialog = true }
                     .testTag("create_project_card_button"),
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFD0BCFF)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(24.dp),
+                        .padding(20.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Dự án mới",
+                            text = Localization.get("new_project", currentLang),
                             fontSize = 20.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF381E72)
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Bắt đầu tạo Video hoặc file MIDI mới",
-                            fontSize = 14.sp,
-                            color = Color(0xFF381E72).copy(alpha = 0.7f)
+                            text = Localization.get("new_project_sub", currentLang),
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Box(
                         modifier = Modifier
-                            .size(56.dp)
-                            .background(Color(0xFF381E72), RoundedCornerShape(16.dp)),
+                            .size(52.dp)
+                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Tạo mới",
-                            tint = Color(0xFFD0BCFF),
-                            modifier = Modifier.size(32.dp)
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(30.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Recent Projects Label block
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 12.dp),
+                    .padding(horizontal = 6.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "DỰ ÁN GẦN ĐÂY",
+                    text = Localization.get("recent_projects", currentLang),
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFFCAC4D0),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
                     letterSpacing = 1.sp
                 )
                 Text(
-                    text = "Xem tất cả",
+                    text = "${projects.size} " + if (currentLang == Localization.Language.VN) "dự án" else "projects",
                     fontSize = 12.sp,
-                    color = Color(0xFFD0BCFF),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Normal
                 )
             }
@@ -173,22 +211,22 @@ fun HomeScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            "📦",
-                            fontSize = 48.sp,
+                            "🎤",
+                            fontSize = 44.sp,
                             modifier = Modifier.padding(bottom = 12.dp)
                         )
                         Text(
-                            "Chưa có dự án nào",
+                            Localization.get("no_projects_title", currentLang),
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp,
-                            color = Color(0xFFE6E1E5)
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Nhấp 'Dự án mới' để bắt đầu làm video karaoke đầu tiên!",
+                            Localization.get("no_projects_desc", currentLang),
                             textAlign = TextAlign.Center,
-                            fontSize = 14.sp,
-                            color = Color(0xFF938F99),
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 32.dp)
                         )
                     }
@@ -198,11 +236,12 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(projects) { project ->
                         ProjectItemRow(
                             project = project,
+                            currentLang = currentLang,
                             onEdit = { onEditProject(project.id) },
                             onDelete = { onDeleteProject(project.id) }
                         )
@@ -214,6 +253,7 @@ fun HomeScreen(
 
     if (showCreateDialog) {
         CreateProjectDialog(
+            currentLang = currentLang,
             onDismiss = { showCreateDialog = false },
             onCreate = { title, artist, lyrics, preset ->
                 onCreateProject(title, artist, lyrics, preset)
@@ -226,6 +266,7 @@ fun HomeScreen(
 @Composable
 fun ProjectItemRow(
     project: KaraokeProject,
+    currentLang: Localization.Language,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -237,10 +278,11 @@ fun ProjectItemRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 2.dp),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF2B2930)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
             modifier = Modifier
@@ -249,24 +291,24 @@ fun ProjectItemRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Thumbnail with visual representation matching HTML
+            // Thumbnail with visual equalizer wave
             Box(
                 modifier = Modifier
-                    .size(64.dp)
-                    .background(Color(0xFF45414C), RoundedCornerShape(8.dp)),
+                    .size(56.dp)
+                    .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    Box(modifier = Modifier.width(40.dp).height(4.dp).background(Color(0xFFD0BCFF), CircleShape))
-                    Box(modifier = Modifier.width(24.dp).height(4.dp).background(Color(0xFFD0BCFF).copy(alpha = 0.5f), CircleShape))
-                    Box(modifier = Modifier.width(32.dp).height(4.dp).background(Color(0xFFD0BCFF), CircleShape))
+                    Box(modifier = Modifier.width(36.dp).height(3.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+                    Box(modifier = Modifier.width(22.dp).height(3.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), CircleShape))
+                    Box(modifier = Modifier.width(28.dp).height(3.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
                 }
             }
 
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(14.dp))
 
             // Project Info Details
             Column(
@@ -275,60 +317,58 @@ fun ProjectItemRow(
                 Text(
                     text = project.title,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.White
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Nghệ sĩ: ${project.artist}",
+                    text = if (currentLang == Localization.Language.VN) "Nghệ sĩ: ${project.artist}" else "Artist: ${project.artist}",
                     fontSize = 12.sp,
-                    color = Color(0xFF938F99)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "ĐÃ SỬA $formattedDate",
+                    text = "$formattedDate",
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFD0BCFF)
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Action Buttons matching visual design
+            // Action Buttons
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(Color(0xFF49454F), CircleShape)
-                        .clickable(onClick = onEdit)
-                        .testTag("edit_project_btn_${project.id}"),
-                    contentAlignment = Alignment.Center
+                IconButton(
+                    onClick = onEdit,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    ),
+                    modifier = Modifier.testTag("edit_project_btn_${project.id}")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Edit,
                         contentDescription = "Chỉnh sửa",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(Color(0xFF49454F).copy(alpha = 0.5f), CircleShape)
-                        .clickable(onClick = onDelete)
-                        .testTag("delete_project_btn_${project.id}"),
-                    contentAlignment = Alignment.Center
+                IconButton(
+                    onClick = onDelete,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    ),
+                    modifier = Modifier.testTag("delete_project_btn_${project.id}")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
                         contentDescription = "Xóa",
-                        tint = Color(0xFFF2B8B5),
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -339,6 +379,7 @@ fun ProjectItemRow(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateProjectDialog(
+    currentLang: Localization.Language,
     onDismiss: () -> Unit,
     onCreate: (String, String, String, com.example.data.PresetSong?) -> Unit
 ) {
@@ -348,37 +389,37 @@ fun CreateProjectDialog(
     var selectedPreset by remember { mutableStateOf<com.example.data.PresetSong?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
-        Card(
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, Color(0xFF49454F)),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF2B2930))
+                .padding(8.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(
                 modifier = Modifier
-                    .padding(16.dp)
+                    .padding(20.dp)
                     .fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "TẠO DỰ ÁN MỚI",
-                    fontSize = 20.sp,
+                    text = if (currentLang == Localization.Language.VN) "TẠO DỰ ÁN MỚI" else "CREATE NEW PROJECT",
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Divider(color = Color(0xFF49454F))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-                // presets selector
+                // Preset selector
                 Text(
-                    text = "Chọn từ bài hát mẫu (Tự động điền đầy đủ lời & timeline):",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFCAC4D0)
+                    text = if (currentLang == Localization.Language.VN) "Chọn từ bài hát mẫu (tự động có nhạc & nốt):" else "Choose from preset songs (auto filled):",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -395,10 +436,10 @@ fun CreateProjectDialog(
                                     artist = preset.artist
                                     lyrics = preset.lyrics
                                 },
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, if (isSelected) Color(0xFFD0BCFF) else Color(0xFF49454F)),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
                             colors = CardDefaults.cardColors(
-                                containerColor = if (isSelected) Color(0xFF381E72) else Color(0xFF1C1B1F)
+                                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                             )
                         ) {
                             Box(
@@ -409,9 +450,9 @@ fun CreateProjectDialog(
                             ) {
                                 Text(
                                     preset.title,
-                                    fontSize = 12.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isSelected) Color(0xFFD0BCFF) else Color.White,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
                                 )
                             }
@@ -419,68 +460,42 @@ fun CreateProjectDialog(
                     }
                 }
 
-                Divider(color = Color(0xFF49454F))
-
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Tên bài hát", color = Color(0xFFCAC4D0)) },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFFD0BCFF),
-                        unfocusedBorderColor = Color(0xFF49454F),
-                        focusedLabelColor = Color(0xFFD0BCFF),
-                        unfocusedLabelColor = Color(0xFFCAC4D0)
-                    ),
+                    label = { Text(if (currentLang == Localization.Language.VN) "Tên bài hát" else "Song Title") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
                     value = artist,
                     onValueChange = { artist = it },
-                    label = { Text("Nghệ sĩ", color = Color(0xFFCAC4D0)) },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFFD0BCFF),
-                        unfocusedBorderColor = Color(0xFF49454F),
-                        focusedLabelColor = Color(0xFFD0BCFF),
-                        unfocusedLabelColor = Color(0xFFCAC4D0)
-                    ),
+                    label = { Text(if (currentLang == Localization.Language.VN) "Nghệ sĩ" else "Artist") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
                     value = lyrics,
                     onValueChange = { lyrics = it },
-                    label = { Text("Lời bài hát (Xuống dòng cho mỗi câu)", color = Color(0xFFCAC4D0)) },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFFD0BCFF),
-                        unfocusedBorderColor = Color(0xFF49454F),
-                        focusedLabelColor = Color(0xFFD0BCFF),
-                        unfocusedLabelColor = Color(0xFFCAC4D0)
-                    ),
+                    label = { Text(if (currentLang == Localization.Language.VN) "Lời bài hát (Xuống dòng cho mỗi câu)" else "Lyrics (Line by line)") },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(110.dp)
+                        .height(100.dp)
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedButton(
                         onClick = onDismiss,
-                        border = BorderStroke(1.dp, Color(0xFF938F99)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD0BCFF)),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Hủy")
+                        Text(if (currentLang == Localization.Language.VN) "Hủy" else "Cancel")
                     }
 
                     Button(
@@ -489,10 +504,16 @@ fun CreateProjectDialog(
                                 onCreate(title, artist, lyrics, selectedPreset)
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD0BCFF), contentColor = Color(0xFF381E72)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Tạo dự án", fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (currentLang == Localization.Language.VN) "Tạo dự án" else "Create",
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

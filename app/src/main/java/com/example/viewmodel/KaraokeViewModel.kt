@@ -685,6 +685,19 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
         saveActiveProject()
     }
 
+    // Step back 1 word to allow re-synchronization
+    fun undoLastSyncSyllable() {
+        val currentList = _syncedSyllables.value.toMutableList()
+        if (currentList.isNotEmpty() && _currentSyncQueueIndex.value > 0) {
+            val removed = currentList.removeAt(currentList.size - 1)
+            _syncedSyllables.value = currentList
+            _currentSyncQueueIndex.value = (_currentSyncQueueIndex.value - 1).coerceAtLeast(0)
+            val targetSeek = (removed.startTimeMs - 1000L).coerceAtLeast(0L)
+            seekTo(targetSeek)
+            saveActiveProject()
+        }
+    }
+
     // Manual syllable timeline edits
     fun updateSyllableTiming(lineIndex: Int, syllableIndex: Int, startMs: Long, endMs: Long) {
         val currentList = _syncedSyllables.value.toMutableList()
