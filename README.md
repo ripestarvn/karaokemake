@@ -1,5 +1,5 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+<img width="600" height="600" alt="GHBanner" src="https://cdn.discordapp.com/attachments/1490362575085506773/1539182088346009610/MUSTUDIOLOGO.png?ex=6a856286&is=6a841106&hm=9bdf0b6c0ca9bc4790582791ff514b88586770a4126712471598d83d2921ab5a&" />
 </div>
 
 # Karaoke Make
