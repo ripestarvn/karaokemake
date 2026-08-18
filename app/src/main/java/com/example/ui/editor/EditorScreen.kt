@@ -43,6 +43,9 @@ import java.io.File
 import com.example.data.KaraokeProject
 import com.example.data.PresetSongs
 import com.example.data.TimedSyllable
+import com.example.ui.util.AppLogger
+import com.example.ui.util.CustomFontManager
+import com.example.ui.util.RomajiConverter
 import com.example.ui.settings.AppSettings
 import com.example.ui.util.Localization
 import com.example.viewmodel.KaraokeViewModel
@@ -90,6 +93,21 @@ fun EditorScreen(
         }
     }
 
+    val fontPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            val importedName = CustomFontManager.importFontFromUri(context, uri)
+            if (importedName != null) {
+                viewModel.customFontName.value = importedName
+                scope.launch { viewModel.saveActiveProject() }
+                Toast.makeText(context, if (appSettings.language.value == Localization.Language.VN) "Đã thêm phông chữ: $importedName" else "Imported font: $importedName", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, if (appSettings.language.value == Localization.Language.VN) "Tệp phông chữ không hợp lệ (.ttf, .otf)!" else "Invalid font file (.ttf, .otf)!", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         viewModel.userNotification.collect { message ->
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -122,7 +140,7 @@ fun EditorScreen(
     val showWaveform by appSettings.showWaveform.collectAsState()
 
     // Tab categories
-    val tabs = listOf("tab_lyrics", "tab_sync", "tab_audio", "tab_layout", "tab_export")
+    val tabs = listOf("tab_lyrics", "tab_sync", "tab_audio", "tab_layout", "tab_style", "tab_export")
     var activeTab by remember { mutableStateOf("tab_sync") }
 
     // Export dialog triggers
@@ -132,6 +150,10 @@ fun EditorScreen(
 
     // Manual syllable editor state
     var selectedSyllableForEdit by remember { mutableStateOf<TimedSyllable?>(null) }
+
+    // Japanese Original Script Replacement Dialog state
+    var showApplyOriginalDialog by remember { mutableStateOf(false) }
+    var originalLyricsInput by remember { mutableStateOf("") }
 
     // Core layout is Landscape row splits
     Row(
@@ -799,6 +821,50 @@ fun EditorScreen(
                                 modifier = Modifier.padding(horizontal = 8.dp)
                             )
 
+                            // Japanese Romaji & Original text conversion quick toolbar
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        viewModel.convertSyncedSyllablesToHiragana()
+                                        Toast.makeText(context, if (currentLang == Localization.Language.VN) "Đã chuyển timeline sang Hiragana!" else "Converted to Hiragana!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5C3317), contentColor = Color(0xFFFFD700)),
+                                    shape = RoundedCornerShape(4.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                    modifier = Modifier.weight(1f).height(28.dp)
+                                ) {
+                                    Text("🇯🇵 Hiragana", fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        viewModel.convertSyncedSyllablesToKatakana()
+                                        Toast.makeText(context, if (currentLang == Localization.Language.VN) "Đã chuyển timeline sang Katakana!" else "Converted to Katakana!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C3E50), contentColor = Color(0xFF00FFFF)),
+                                    shape = RoundedCornerShape(4.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                    modifier = Modifier.weight(1f).height(28.dp)
+                                ) {
+                                    Text("🎌 Katakana", fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                }
+
+                                OutlinedButton(
+                                    onClick = { showApplyOriginalDialog = true },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD0BCFF)),
+                                    border = BorderStroke(1.dp, Color(0xFFD0BCFF)),
+                                    shape = RoundedCornerShape(4.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                    modifier = Modifier.weight(1.1f).height(28.dp)
+                                ) {
+                                    Text("📝 Lời Gốc", fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                }
+                            }
+
                             // Sync utilities row (Undo 1 word + Reset)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1194,14 +1260,94 @@ fun EditorScreen(
                         }
                     }
 
-                    "Tùy biến" -> {
+                    "tab_style" -> {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            // Countdown Signals (4 Chấm tín hiệu nhịp trước câu hát)
+                            // 1. Japanese Romaji & Original Script Tools
                             item {
-                                Text("TÍN HIỆU ĐẾM NGƯỢC RHYTHM (SIGNALS)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD0BCFF))
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2E1A47)),
+                                    border = BorderStroke(1.dp, Color(0xFFD0BCFF).copy(alpha = 0.5f)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                Localization.get("romaji_converter_title", currentLang),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFFFD700)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            Localization.get("romaji_converter_desc", currentLang),
+                                            fontSize = 9.sp,
+                                            color = Color.LightGray
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Button(
+                                                onClick = {
+                                                    viewModel.convertSyncedSyllablesToHiragana()
+                                                    Toast.makeText(context, if (currentLang == Localization.Language.VN) "Đã chuyển timeline sang Hiragana!" else "Converted timeline to Hiragana!", Toast.LENGTH_SHORT).show()
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4), contentColor = Color.White),
+                                                shape = RoundedCornerShape(6.dp),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                modifier = Modifier.weight(1f).height(32.dp)
+                                            ) {
+                                                Text(Localization.get("to_hiragana", currentLang), fontSize = 8.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                            }
+
+                                            Button(
+                                                onClick = {
+                                                    viewModel.convertSyncedSyllablesToKatakana()
+                                                    Toast.makeText(context, if (currentLang == Localization.Language.VN) "Đã chuyển timeline sang Katakana!" else "Converted timeline to Katakana!", Toast.LENGTH_SHORT).show()
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006699), contentColor = Color.White),
+                                                shape = RoundedCornerShape(6.dp),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                modifier = Modifier.weight(1f).height(32.dp)
+                                            ) {
+                                                Text(Localization.get("to_katakana", currentLang), fontSize = 8.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(6.dp))
+
+                                        OutlinedButton(
+                                            onClick = { showApplyOriginalDialog = true },
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFD700)),
+                                            border = BorderStroke(1.dp, Color(0xFFFFD700)),
+                                            shape = RoundedCornerShape(6.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                            modifier = Modifier.fillMaxWidth().height(32.dp)
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = "Kanji", modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(Localization.get("apply_original_script", currentLang), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
+                            item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
+
+                            // 2. Countdown Signals (4 Chấm tín hiệu nhịp trước câu hát)
+                            item {
+                                Text(
+                                    Localization.get("lead_in_signals", currentLang),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFD0BCFF)
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 val enableSig = viewModel.customEnableSignals.collectAsState().value
                                 Row(
@@ -1209,7 +1355,11 @@ fun EditorScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Hiển thị 4 chấm đếm nhịp trước câu", fontSize = 10.sp, color = Color.White)
+                                    Text(
+                                        if (currentLang == Localization.Language.VN) "Hiển thị chấm đếm nhịp trước câu" else "Show countdown dots before line",
+                                        fontSize = 10.sp,
+                                        color = Color.White
+                                    )
                                     Switch(
                                         checked = enableSig,
                                         onCheckedChange = {
@@ -1222,7 +1372,11 @@ fun EditorScreen(
 
                                 if (enableSig) {
                                     val sigDuration = viewModel.customSignalDurationMs.collectAsState().value
-                                    Text("Thời gian đếm ngược: ${sigDuration} ms", fontSize = 10.sp, color = Color.LightGray)
+                                    Text(
+                                        "${Localization.get("signal_duration", currentLang)}: ${sigDuration} ms",
+                                        fontSize = 10.sp,
+                                        color = Color.LightGray
+                                    )
                                     Slider(
                                         value = sigDuration.toFloat(),
                                         onValueChange = {
@@ -1234,7 +1388,11 @@ fun EditorScreen(
                                     )
 
                                     val dotsCount = viewModel.customSignalDotsCount.collectAsState().value
-                                    Text("Số chấm tín hiệu: ${dotsCount} chấm", fontSize = 10.sp, color = Color.LightGray)
+                                    Text(
+                                        "${Localization.get("signal_dots", currentLang)}: ${dotsCount} ${if (currentLang == Localization.Language.VN) "chấm" else "dots"}",
+                                        fontSize = 10.sp,
+                                        color = Color.LightGray
+                                    )
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         listOf(3, 4, 5).forEach { count ->
                                             val isSel = count == dotsCount
@@ -1247,18 +1405,26 @@ fun EditorScreen(
                                                     }
                                                     .padding(horizontal = 12.dp, vertical = 6.dp)
                                             ) {
-                                                Text("$count chấm", color = if (isSel) Color.Black else Color.White, fontSize = 9.sp)
+                                                Text(
+                                                    "$count ${if (currentLang == Localization.Language.VN) "chấm" else "dots"}",
+                                                    color = if (isSel) Color.Black else Color.White,
+                                                    fontSize = 9.sp
+                                                )
                                             }
                                         }
                                     }
 
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Màu chấm sáng (Lit Color):", fontSize = 10.sp, color = Color.LightGray)
+                                    Text(
+                                        "${Localization.get("signal_color", currentLang)}:",
+                                        fontSize = 10.sp,
+                                        color = Color.LightGray
+                                    )
                                     val sigColors = listOf(
-                                        4278190335L to "Xanh Dương",
-                                        4294967040L to "Vàng Brilliant",
-                                        4294901760L to "Đỏ Chói",
-                                        4278255360L to "Xanh Lá"
+                                        4278190335L to (if (currentLang == Localization.Language.VN) "Xanh Dương" else "Blue"),
+                                        4294967040L to (if (currentLang == Localization.Language.VN) "Vàng" else "Yellow"),
+                                        4294901760L to (if (currentLang == Localization.Language.VN) "Đỏ" else "Red"),
+                                        4278255360L to (if (currentLang == Localization.Language.VN) "Xanh Lá" else "Green")
                                     )
                                     val activeSigColor = viewModel.customSignalColor.collectAsState().value
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1281,32 +1447,93 @@ fun EditorScreen(
 
                             item { Divider(color = Color.LightGray.copy(alpha = 0.15f)) }
 
-                            // Font & Size
+                            // 3. Font & Size with Custom Font File Management
                             item {
-                                Text("KIỂU CHỮ & CỠ CHỮ", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                val fonts = listOf("Default", "SansSerif", "Serif", "Monospace")
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        Localization.get("custom_fonts_header", currentLang),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+
+                                    Button(
+                                        onClick = {
+                                            fontPickerLauncher.launch(arrayOf("*/*", "font/*", "application/x-font-ttf", "application/x-font-opentype", "application/octet-stream"))
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF381E72), contentColor = Color(0xFFD0BCFF)),
+                                        shape = RoundedCornerShape(4.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = "Add Font", modifier = Modifier.size(12.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(Localization.get("add_custom_font", currentLang), fontSize = 8.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                val customFontItems by CustomFontManager.customFonts.collectAsState()
+                                val customFontNames = customFontItems.map { it.name }
+                                val allFontChoices = listOf("Default", "SansSerif", "Serif", "Monospace") + customFontNames
+                                val selectedFont = viewModel.customFontName.collectAsState().value
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    fonts.forEach { font ->
-                                        val isSelected = font == viewModel.customFontName.collectAsState().value
+                                    allFontChoices.forEach { font ->
+                                        val isSelected = font == selectedFont
+                                        val isCustom = customFontNames.contains(font)
+
                                         Card(
                                             modifier = Modifier.clickable {
                                                 viewModel.customFontName.value = font
                                                 scope.launch { viewModel.saveActiveProject() }
                                             },
                                             border = BorderStroke(1.dp, if (isSelected) Color(0xFFD0BCFF) else Color.Gray),
-                                            colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFFDE1D1D).copy(alpha = 0.2f) else Color.Transparent)
+                                            colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF6750A4).copy(alpha = 0.5f) else Color.DarkGray.copy(alpha = 0.4f))
                                         ) {
-                                            Text(font, color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                if (isCustom) {
+                                                    Icon(Icons.Default.Star, contentDescription = "Custom Font", tint = Color(0xFFFFD700), modifier = Modifier.size(10.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                }
+                                                Text(font, color = Color.White, fontSize = 10.sp)
+                                                if (isCustom) {
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Icon(
+                                                        Icons.Default.Close,
+                                                        contentDescription = "Delete Font",
+                                                        tint = Color.LightGray,
+                                                        modifier = Modifier.size(12.dp).clickable {
+                                                            CustomFontManager.deleteCustomFont(context, font)
+                                                            if (selectedFont == font) {
+                                                                viewModel.customFontName.value = "Default"
+                                                                scope.launch { viewModel.saveActiveProject() }
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("Kích Thước Chữ: ${viewModel.customFontSize.collectAsState().value.toInt()} sp", fontSize = 10.sp, color = Color.White)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    "${Localization.get("font_size", currentLang)}: ${viewModel.customFontSize.collectAsState().value.toInt()} sp",
+                                    fontSize = 10.sp,
+                                    color = Color.White
+                                )
                                 Slider(
                                     value = viewModel.customFontSize.collectAsState().value,
                                     onValueChange = {
@@ -1322,16 +1549,25 @@ fun EditorScreen(
 
                             // Color Fill (Active & Idle)
                             item {
-                                Text("MÀU CHỮ HÁT & CHỜ (FILL COLOR)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text(
+                                    if (currentLang == Localization.Language.VN) "MÀU CHỮ HÁT & CHỜ (FILL COLOR)" else "LYRICS FILL COLORS (ACTIVE & IDLE)",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
 
-                                Text("Màu chữ đã hát (Active):", fontSize = 10.sp, color = Color.LightGray)
+                                Text(
+                                    Localization.get("active_text_color", currentLang) + ":",
+                                    fontSize = 10.sp,
+                                    color = Color.LightGray
+                                )
                                 val activeColors = listOf(
-                                    0xFFFF3B30 to "Đỏ",
-                                    0xFFFFFF00 to "Vàng",
-                                    0xFF00FF00 to "Xanh Lá",
+                                    0xFFFF3B30 to (if (currentLang == Localization.Language.VN) "Đỏ" else "Red"),
+                                    0xFFFFFF00 to (if (currentLang == Localization.Language.VN) "Vàng" else "Yellow"),
+                                    0xFF00FF00 to (if (currentLang == Localization.Language.VN) "Xanh Lá" else "Green"),
                                     0xFF00FFFF to "Cyan",
-                                    0xFFFF00FF to "Hồng"
+                                    0xFFFF00FF to (if (currentLang == Localization.Language.VN) "Hồng" else "Pink")
                                 )
                                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     activeColors.forEach { (clr, label) ->
@@ -1350,12 +1586,16 @@ fun EditorScreen(
                                 }
 
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("Màu chữ chờ (Idle):", fontSize = 10.sp, color = Color.LightGray)
+                                Text(
+                                    Localization.get("idle_text_color", currentLang) + ":",
+                                    fontSize = 10.sp,
+                                    color = Color.LightGray
+                                )
                                 val idleColors = listOf(
-                                    0xFFFFFFFF to "Trắng",
-                                    0xFFAAAAAA to "Xám",
-                                    0xFFFFFFE0 to "Vàng Nhạt",
-                                    0xFFE0FFFF to "Cyan Nhạt"
+                                    0xFFFFFFFF to (if (currentLang == Localization.Language.VN) "Trắng" else "White"),
+                                    0xFFAAAAAA to (if (currentLang == Localization.Language.VN) "Xám" else "Gray"),
+                                    0xFFFFFFE0 to (if (currentLang == Localization.Language.VN) "Vàng Nhạt" else "Light Yellow"),
+                                    0xFFE0FFFF to (if (currentLang == Localization.Language.VN) "Cyan Nhạt" else "Light Cyan")
                                 )
                                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     idleColors.forEach { (clr, label) ->
@@ -1378,10 +1618,19 @@ fun EditorScreen(
 
                             // Stroke & Shadow
                             item {
-                                Text("VIỀN & BÓNG CHỮ (STROKE & SHADOW)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text(
+                                    Localization.get("outline_stroke", currentLang),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 val strokeW = viewModel.customStrokeWidth.collectAsState().value
-                                Text("Độ dày viền: ${strokeW.toInt()} px", fontSize = 10.sp, color = Color.White)
+                                Text(
+                                    "${Localization.get("stroke_width", currentLang)}: ${strokeW.toInt()} px",
+                                    fontSize = 10.sp,
+                                    color = Color.White
+                                )
                                 Slider(
                                     value = strokeW,
                                     onValueChange = {
@@ -1393,7 +1642,11 @@ fun EditorScreen(
                                 )
 
                                 val shadowR = viewModel.customShadowRadius.collectAsState().value
-                                Text("Độ lan bóng: ${shadowR.toInt()} px", fontSize = 10.sp, color = Color.White)
+                                Text(
+                                    "${Localization.get("shadow_blur", currentLang)}: ${shadowR.toInt()} px",
+                                    fontSize = 10.sp,
+                                    color = Color.White
+                                )
                                 Slider(
                                     value = shadowR,
                                     onValueChange = {
@@ -1409,9 +1662,19 @@ fun EditorScreen(
 
                             // Background
                             item {
-                                Text("NỀN VIDEO PREVIEW (BACKGROUND)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text(
+                                    Localization.get("background_type", currentLang),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
-                                val bgTypes = listOf("CHECKERBOARD" to "Caro Trong Suốt", "SOLID_GREEN" to "Phông Xanh (Key)", "BLACK" to "Đen Tuyền", "GRADIENT" to "Gradient Tím")
+                                val bgTypes = listOf(
+                                    "CHECKERBOARD" to Localization.get("bg_checkerboard", currentLang),
+                                    "SOLID_GREEN" to Localization.get("bg_green", currentLang),
+                                    "BLACK" to Localization.get("bg_black", currentLang),
+                                    "GRADIENT" to Localization.get("bg_gradient", currentLang)
+                                )
                                 Row(
                                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1492,9 +1755,11 @@ fun EditorScreen(
                             Button(
                                 onClick = {
                                     if (syncedSyllables.isEmpty()) {
+                                        AppLogger.warn("Export", "Attempted to export SRT with no synced lyrics")
                                         Toast.makeText(context, "Chưa có lời hát nào được đồng bộ!", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
+                                    AppLogger.action("Export", "Starting SRT subtitle export (${syncedSyllables.size} syllables)")
                                     exportingState = "SRT"
                                     exportProgress = 0f
                                     scope.launch {
@@ -1505,6 +1770,11 @@ fun EditorScreen(
                                         }
                                         val srtFile = viewModel.saveSrtFile()
                                         exportedFilepath = srtFile?.absolutePath ?: "Thư mục Downloads"
+                                        if (srtFile != null) {
+                                            AppLogger.info("Export", "Exported SRT file: ${srtFile.name}")
+                                        } else {
+                                            AppLogger.error("Export", "Failed to write SRT file to disk")
+                                        }
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.Blue),
@@ -1518,36 +1788,40 @@ fun EditorScreen(
                              }
 
                              Button(
-                                onClick = {
-                                    if (syncedSyllables.isEmpty()) {
-                                        Toast.makeText(context, "Chưa có lời hát nào được đồng bộ!", Toast.LENGTH_SHORT).show()
-                                        return@Button
-                                    }
-                                    exportingState = "MP4"
-                                    exportProgress = 0f
-                                    scope.launch {
-                                        // Collect real rendering progress from VM in background
-                                        val progressJob = launch {
-                                            viewModel.exportProgressFlow.collect { progress ->
-                                                exportProgress = progress
-                                            }
-                                        }
-                                        // Run the real media transcoder in IO thread
-                                        val mp4File = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                            viewModel.saveMp4File()
-                                        }
-                                        progressJob.cancel()
-                                        exportProgress = 1f
-                                        exportedFilepath = mp4File?.absolutePath ?: "LỖI XUẤT PHIM"
-                                        if (mp4File == null) {
-                                            Toast.makeText(context, "Lỗi trích xuất định dạng MP4!", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(context, "Đã xuất video karaoke thành công!", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD0BCFF), contentColor = Color(0xFF381E72)),
-                                modifier = Modifier.fillMaxWidth()
+                                 onClick = {
+                                     if (syncedSyllables.isEmpty()) {
+                                         AppLogger.warn("Export", "Attempted to export MP4 with no synced lyrics")
+                                         Toast.makeText(context, "Chưa có lời hát nào được đồng bộ!", Toast.LENGTH_SHORT).show()
+                                         return@Button
+                                     }
+                                     AppLogger.action("Export", "Starting MP4 video render ($resolution, ${fps}fps)")
+                                     exportingState = "MP4"
+                                     exportProgress = 0f
+                                     scope.launch {
+                                         // Collect real rendering progress from VM in background
+                                         val progressJob = launch {
+                                             viewModel.exportProgressFlow.collect { progress ->
+                                                 exportProgress = progress
+                                             }
+                                         }
+                                         // Run the real media transcoder in IO thread
+                                         val mp4File = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                             viewModel.saveMp4File()
+                                         }
+                                         progressJob.cancel()
+                                         exportProgress = 1f
+                                         exportedFilepath = mp4File?.absolutePath ?: "LỖI XUẤT PHIM"
+                                         if (mp4File == null) {
+                                             AppLogger.error("Export", "MP4 export failed or encountered error")
+                                             Toast.makeText(context, "Lỗi trích xuất định dạng MP4!", Toast.LENGTH_SHORT).show()
+                                         } else {
+                                             AppLogger.info("Export", "MP4 video export completed: ${mp4File.name}")
+                                             Toast.makeText(context, "Đã xuất video karaoke thành công!", Toast.LENGTH_SHORT).show()
+                                         }
+                                     }
+                                 },
+                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD0BCFF), contentColor = Color(0xFF381E72)),
+                                 modifier = Modifier.fillMaxWidth()
                              ) {
                                  Row(verticalAlignment = Alignment.CenterVertically) {
                                      Icon(Icons.Default.PlayArrow, contentDescription = "Render", modifier = Modifier.size(16.dp))
@@ -1705,6 +1979,87 @@ fun EditorScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD0BCFF))
                         ) {
                             Text("Xác Nhận", color = Color.Black)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- DIALOG: Replace Romaji with Original Script (Kanji/Kana/Hiragana/Katakana) ---
+    if (showApplyOriginalDialog) {
+        Dialog(onDismissRequest = { showApplyOriginalDialog = false }) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+                border = BorderStroke(1.dp, Color(0xFFD0BCFF)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(0.9f).padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        Localization.get("apply_original_script", currentLang),
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        if (currentLang == Localization.Language.VN)
+                            "Dán lời bài hát gốc (tiếng Nhật có Kanji / Kana / Hiragana / Katakana) tương ứng từng dòng để giữ nguyên thời gian đếm nhịp nhưng hiển thị chữ gốc:"
+                        else
+                            "Paste the original Japanese text (Kanji / Kana / Hiragana / Katakana) line by line to keep synchronized timings while replacing displayed text:",
+                        fontSize = 9.5.sp,
+                        color = Color.LightGray
+                    )
+
+                    OutlinedTextField(
+                        value = originalLyricsInput,
+                        onValueChange = { originalLyricsInput = it },
+                        placeholder = {
+                            Text(
+                                "Dán lời gốc tiếng Nhật tại đây...\nVD: また、心は傷ついた\n(Từng dòng tương ứng với các câu hát đã sync)",
+                                color = Color.Gray,
+                                fontSize = 10.sp
+                            )
+                        },
+                        textStyle = TextStyle(color = Color.White, fontSize = 10.sp, fontFamily = FontFamily.Monospace),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFFD0BCFF),
+                            unfocusedBorderColor = Color.DarkGray
+                        )
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { showApplyOriginalDialog = false }) {
+                            Text(Localization.get("cancel", currentLang), color = Color.LightGray, fontSize = 11.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (originalLyricsInput.isNotBlank()) {
+                                    val count = viewModel.replaceSyncedSyllablesWithOriginalScript(originalLyricsInput)
+                                    Toast.makeText(
+                                        context,
+                                        if (currentLang == Localization.Language.VN) "Đã áp dụng lời gốc cho $count từ/âm tiết!" else "Applied original text to $count syllables!",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    showApplyOriginalDialog = false
+                                } else {
+                                    Toast.makeText(context, if (currentLang == Localization.Language.VN) "Vui lòng nhập lời gốc!" else "Please paste original lyrics!", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4), contentColor = Color.White)
+                        ) {
+                            Text(Localization.get("apply", currentLang), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1911,7 +2266,7 @@ fun KaraokeSubtitlesDisplay(
                                         }
 
                                         TextWithStrokeAndShadow(
-                                            text = syl.text + " ",
+                                            text = syl.text + if (syl.joinWithNext) "" else " ",
                                             activePercent = activePercent,
                                             fontSize = fontSize,
                                             fontName = fontName,
@@ -1964,7 +2319,7 @@ fun KaraokeSubtitlesDisplay(
                                         }
 
                                         TextWithStrokeAndShadow(
-                                            text = syl.text + " ",
+                                            text = syl.text + if (syl.joinWithNext) "" else " ",
                                             activePercent = activePercent,
                                             fontSize = fontSize,
                                             fontName = fontName,
@@ -2000,22 +2355,18 @@ fun TextWithStrokeAndShadow(
     shadowColor: Color,
     shadowRadiusPx: Float
 ) {
+    val context = LocalContext.current
     // Custom native canvas drawing allows incredible outline details in Jetpack Compose
     Canvas(
         modifier = Modifier
             .height((fontSize * 1.6f).dp)
-            .width((text.length * fontSize * 0.62f).dp)
+            .width((text.length * fontSize * 0.62f).coerceAtLeast(fontSize * 0.3f).dp)
     ) {
         val paint = android.graphics.Paint().apply {
             isAntiAlias = true
             textSize = fontSize * density
             textAlign = android.graphics.Paint.Align.LEFT
-            typeface = when (fontName) {
-                "Serif" -> android.graphics.Typeface.SERIF
-                "Monospace" -> android.graphics.Typeface.MONOSPACE
-                "SansSerif" -> android.graphics.Typeface.SANS_SERIF
-                else -> android.graphics.Typeface.DEFAULT_BOLD
-            }
+            typeface = CustomFontManager.getAndroidTypeface(fontName, context)
         }
 
         // Draw Shadows of text

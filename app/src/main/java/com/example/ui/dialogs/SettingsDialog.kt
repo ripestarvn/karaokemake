@@ -3,6 +3,7 @@ package com.example.ui.dialogs
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -29,6 +30,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.ui.settings.AppSettings
 import com.example.ui.settings.ThemeMode
+import com.example.ui.util.AppLogger
+import com.example.ui.util.LogLevel
 import com.example.ui.util.Localization
 import java.io.File
 import java.io.FileOutputStream
@@ -48,7 +51,12 @@ fun SettingsDialog(
     val showWaveform by appSettings.showWaveform.collectAsState()
 
     var showEditFolderDialog by remember { mutableStateOf(false) }
+    var showLogViewerDialog by remember { mutableStateOf(false) }
     var folderInput by remember { mutableStateOf(exportFolder) }
+    val allLogs by AppLogger.logs.collectAsState()
+    val errorCount = remember(allLogs) { allLogs.count { it.level == LogLevel.ERROR } }
+    val warnCount = remember(allLogs) { allLogs.count { it.level == LogLevel.WARN } }
+    val actionCount = remember(allLogs) { allLogs.count { it.level == LogLevel.ACTION } }
 
     // Document Picker for SoundFont (.sf2) with */* so it never gets blocked by audio filters
     val soundfontPickerLauncher = rememberLauncherForActivityResult(
@@ -470,6 +478,162 @@ fun SettingsDialog(
                             }
                         }
                     }
+
+                    // 7. Hoạt động & Nhật ký hệ thống (Activity Logs & System Diagnostics)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("📋", fontSize = 16.sp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = Localization.get("activity_logs_title", currentLang),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = Localization.get("activity_logs_desc", currentLang),
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Status Badges & Quick Stats
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0xFF0288D1).copy(alpha = 0.2f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "$actionCount ${if (currentLang == Localization.Language.VN) "Thao tác" else "Actions"}",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF80D8FF)
+                                        )
+                                    }
+
+                                    if (warnCount > 0) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(Color(0xFFFF9800).copy(alpha = 0.2f))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "$warnCount ${if (currentLang == Localization.Language.VN) "Cảnh báo" else "Warn"}",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFFFB74D)
+                                            )
+                                        }
+                                    }
+
+                                    if (errorCount > 0) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(Color(0xFFD32F2F).copy(alpha = 0.2f))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "$errorCount ${if (currentLang == Localization.Language.VN) "Lỗi" else "Error"}",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFFF8A80)
+                                            )
+                                        }
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(Color(0xFF388E3C).copy(alpha = 0.2f))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = if (currentLang == Localization.Language.VN) "0 Lỗi" else "0 Errors",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF81C784)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Text(
+                                    text = "${allLogs.size} ${if (currentLang == Localization.Language.VN) "mục" else "entries"}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            // Actions Row: Copy Logs & View Logs Buttons
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val success = AppLogger.copyToClipboard(context)
+                                        if (success) {
+                                            Toast.makeText(context, Localization.get("logs_copied_toast", currentLang), Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = Localization.get("copy_logs", currentLang),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Button(
+                                    onClick = { showLogViewerDialog = true },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.List, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = Localization.get("view_logs", currentLang),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -494,6 +658,13 @@ fun SettingsDialog(
                 }
             }
         }
+    }
+
+    if (showLogViewerDialog) {
+        LogViewerDialog(
+            currentLang = currentLang,
+            onDismiss = { showLogViewerDialog = false }
+        )
     }
 
     if (showEditFolderDialog) {

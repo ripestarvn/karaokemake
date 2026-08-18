@@ -46,7 +46,8 @@ data class TimedSyllable(
     val syllableIndex: Int,
     val text: String,
     val startTimeMs: Long,
-    val endTimeMs: Long
+    val endTimeMs: Long,
+    val joinWithNext: Boolean = false
 )
 
 object JsonHelper {

@@ -19,6 +19,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioSynthesizer
 import com.example.audio.MidiParser
 import com.example.data.*
+import com.example.ui.util.AppLogger
+import com.example.ui.util.CustomFontManager
+import com.example.ui.util.RomajiConverter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -408,7 +411,9 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
             val project = repository.getProjectById(projectId)
             if (project != null) {
                 _activeProject.value = project
-                _syncedSyllables.value = JsonHelper.fromJson(project.timedSyllablesJson)
+                val loadedSyllables = JsonHelper.fromJson(project.timedSyllablesJson)
+                _syncedSyllables.value = loadedSyllables
+                AppLogger.action("Project", "Loaded project #${project.id} '${project.title}' by '${project.artist}' (${loadedSyllables.size} syllables)")
                 
                 // Set custom options in state
                 customFontName.value = project.fontName
@@ -471,6 +476,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                 audioDurationMs = presetSong?.durationMs ?: 180000L
             )
             val newId = repository.insertProject(defaultProject)
+            AppLogger.action("Project", "Created project '$title' by '$artist' (Preset: ${presetSong?.title ?: "Custom"})")
             selectProject(newId.toInt())
         }
     }
@@ -478,6 +484,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
     fun deleteProject(id: Int) {
         viewModelScope.launch {
             repository.deleteProjectById(id)
+            AppLogger.action("Project", "Deleted project #$id")
             if (_activeProject.value?.id == id) {
                 _activeProject.value = null
                 stopPlayback()
@@ -627,11 +634,36 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
     fun parseLyricsToSyllablesQueue(text: String) {
         val lines = text.split("\n")
         val queue = mutableListOf<SyllableToSync>()
+        var globalSyllableIndex = 0
+
         lines.forEachIndexed { lIdx, line ->
-            val words = line.trim().split("\\s+".toRegex())
-            words.forEachIndexed { wIdx, word ->
-                if (word.isNotEmpty()) {
-                    queue.add(SyllableToSync(lIdx, wIdx, word))
+            val words = line.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+            words.forEach { word ->
+                // Check if word contains hyphens '-' for syllable separation (e.g. Ma-ta, ko-ko-ro, hoo-die)
+                if (word.contains("-") && word.length > 1) {
+                    val parts = word.split("-").filter { it.isNotEmpty() }
+                    parts.forEachIndexed { pIdx, part ->
+                        val isLastPart = pIdx == parts.size - 1
+                        queue.add(
+                            SyllableToSync(
+                                lineIndex = lIdx,
+                                syllableIndex = globalSyllableIndex++,
+                                text = part,
+                                originalWord = word,
+                                joinWithNext = !isLastPart
+                            )
+                        )
+                    }
+                } else {
+                    queue.add(
+                        SyllableToSync(
+                            lineIndex = lIdx,
+                            syllableIndex = globalSyllableIndex++,
+                            text = word,
+                            originalWord = word,
+                            joinWithNext = false
+                        )
+                    )
                 }
             }
         }
@@ -658,7 +690,8 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                 syllableIndex = syl.syllableIndex,
                 text = syl.text,
                 startTimeMs = nowMs,
-                endTimeMs = defEndTime
+                endTimeMs = defEndTime,
+                joinWithNext = syl.joinWithNext
             )
 
             // Dynamic lookback to close previous syllable's end time to this syllable's start time for seamless transition!
@@ -674,15 +707,84 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
             _syncedSyllables.value = updatedList
             _currentSyncQueueIndex.value = currentIdx + 1
             
+            AppLogger.action("Sync", "Synced '${syl.text}' at ${nowMs}ms (${currentIdx + 1}/${q.size})")
             // Auto save progress to model
             saveActiveProject()
         }
     }
 
+    fun convertSyncedSyllablesToHiragana() {
+        val current = _syncedSyllables.value
+        if (current.isEmpty()) return
+        val converted = current.map { syl ->
+            syl.copy(text = RomajiConverter.toHiragana(syl.text))
+        }
+        _syncedSyllables.value = converted
+        saveActiveProject()
+        AppLogger.action("Romaji", "Converted ${current.size} synced syllables to Hiragana")
+    }
+
+    fun convertSyncedSyllablesToKatakana() {
+        val current = _syncedSyllables.value
+        if (current.isEmpty()) return
+        val converted = current.map { syl ->
+            syl.copy(text = RomajiConverter.toKatakana(syl.text))
+        }
+        _syncedSyllables.value = converted
+        saveActiveProject()
+        AppLogger.action("Romaji", "Converted ${current.size} synced syllables to Katakana")
+    }
+
+    fun applyOriginalLyricsToTimeline(originalText: String): Int {
+        val current = _syncedSyllables.value
+        if (current.isEmpty() || originalText.isBlank()) return 0
+
+        val origLines = originalText.lines().filter { it.isNotBlank() }
+        val currentLinesMap = current.groupBy { it.lineIndex }
+        val updatedList = mutableListOf<TimedSyllable>()
+
+        currentLinesMap.keys.sorted().forEachIndexed { lineOrder, lineIdx ->
+            val sylsInLine = currentLinesMap[lineIdx]?.sortedBy { it.syllableIndex } ?: emptyList()
+            val origLine = origLines.getOrNull(lineOrder)
+
+            if (origLine != null) {
+                val origWords = origLine.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+                if (origWords.size == sylsInLine.size) {
+                    sylsInLine.forEachIndexed { sIdx, syl ->
+                        updatedList.add(syl.copy(text = origWords[sIdx]))
+                    }
+                } else {
+                    val origChars = origLine.replace("\\s+".toRegex(), "").map { it.toString() }
+                    if (origChars.size == sylsInLine.size) {
+                        sylsInLine.forEachIndexed { sIdx, syl ->
+                            updatedList.add(syl.copy(text = origChars[sIdx], joinWithNext = true))
+                        }
+                    } else {
+                        val step = (origWords.size.toFloat() / sylsInLine.size.toFloat())
+                        sylsInLine.forEachIndexed { sIdx, syl ->
+                            val targetWordIdx = (sIdx * step).toInt().coerceIn(0, origWords.size - 1)
+                            updatedList.add(syl.copy(text = origWords[targetWordIdx]))
+                        }
+                    }
+                }
+            } else {
+                updatedList.addAll(sylsInLine)
+            }
+        }
+
+        _syncedSyllables.value = updatedList
+        saveActiveProject()
+        AppLogger.action("Lyrics", "Applied original script lyrics to timeline with preserved timing (${updatedList.size} syllables)")
+        return updatedList.size
+    }
+
+    fun replaceSyncedSyllablesWithOriginalScript(originalText: String): Int = applyOriginalLyricsToTimeline(originalText)
+
     fun resetSynchronization() {
         _syncedSyllables.value = emptyList()
         _currentSyncQueueIndex.value = 0
         saveActiveProject()
+        AppLogger.warn("Sync", "Reset all syllable timing synchronization")
     }
 
     // Step back 1 word to allow re-synchronization
@@ -695,6 +797,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
             val targetSeek = (removed.startTimeMs - 1000L).coerceAtLeast(0L)
             seekTo(targetSeek)
             saveActiveProject()
+            AppLogger.action("Sync", "Undid syllable '${removed.text}', jumped back to ${targetSeek}ms")
         }
     }
 
@@ -729,7 +832,14 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
             val sylInLine = linesGrouped[lineIdx]?.sortedBy { it.syllableIndex } ?: return@forEach
             val startTimeMs = sylInLine.first().startTimeMs
             val endTimeMs = sylInLine.last().endTimeMs
-            val completeLineText = sylInLine.joinToString(" ") { it.text }
+            val completeLineText = buildString {
+                sylInLine.forEach { syl ->
+                    append(syl.text)
+                    if (!syl.joinWithNext) {
+                        append(" ")
+                    }
+                }
+            }.trim()
 
             srtBuilder.append("$blockIndex\n")
             srtBuilder.append("${formatSrtTime(startTimeMs)} --> ${formatSrtTime(endTimeMs)}\n")
@@ -878,7 +988,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
 
         var currentX = startX
         syllables.forEach { syl ->
-            val text = syl.text + " "
+            val text = syl.text + if (syl.joinWithNext) "" else " "
             val wordWidth = fillPaintIdle.measureText(text)
 
             val activePercent = when {
@@ -1005,26 +1115,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
             val shadowRadius = customShadowRadius.value * scaleFactor
             val bgType = customBackgroundType.value
 
-            var customTypeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            if (fontName != "SansSerif" && fontName != "Serif" && fontName != "Monospace" && fontName != "Default") {
-                val fontDir = getApplication<Application>().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-                if (fontDir != null) {
-                    val ttfFile = File(fontDir, fontName)
-                    if (ttfFile.exists()) {
-                        try {
-                            customTypeface = Typeface.createFromFile(ttfFile)
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    }
-                }
-            } else {
-                customTypeface = when (fontName) {
-                    "Serif" -> Typeface.create(Typeface.SERIF, Typeface.BOLD)
-                    "Monospace" -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-                    else -> Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-                }
-            }
+            val customTypeface = CustomFontManager.getAndroidTypeface(fontName, getApplication())
 
             val linesMap = syllables.groupBy { it.lineIndex }
             val allLineIndexes = linesMap.keys.sorted()
@@ -1108,7 +1199,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
                                 typeface = customTypeface
                             }
                             var totalWidth = 0f
-                            oddSyllables.forEach { totalWidth += linePaint.measureText(it.text + " ") }
+                            oddSyllables.forEach { totalWidth += linePaint.measureText(it.text + if (it.joinWithNext) "" else " ") }
                             val startX = (width.toFloat() - paddingX) - totalWidth
                             drawSyllablesLine(canvas, oddSyllables, currentTimeMs, Math.max(paddingX, startX), row2Y, fontSize,
                                 colorIdle, colorActive, strokeColor, strokeWidth, shadowColor, shadowRadius, customTypeface)
@@ -1291,5 +1382,7 @@ class KaraokeViewModel(application: Application) : AndroidViewModel(application)
 data class SyllableToSync(
     val lineIndex: Int,
     val syllableIndex: Int,
-    val text: String
+    val text: String,
+    val originalWord: String = text,
+    val joinWithNext: Boolean = false
 )

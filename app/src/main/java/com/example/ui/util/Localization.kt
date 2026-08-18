@@ -160,7 +160,32 @@ object Localization {
         "create_project" to "Tạo dự án",
         "create_new_project_dialog" to "TẠO DỰ ÁN MỚI",
         "choose_preset" to "Chọn từ bài hát mẫu (tự động có nhạc & nốt):",
-        "cancel" to "Hủy"
+        "cancel" to "Hủy",
+
+        // Activity Logs
+        "activity_logs_title" to "NHẬT KÝ HOẠT ĐỘNG & HỆ THỐNG",
+        "activity_logs_desc" to "Ghi lại thao tác, cảnh báo & lỗi của ứng dụng (không làm chậm máy)",
+        "view_logs" to "Xem Nhật Ký",
+        "copy_logs" to "Sao chép Log",
+        "copy_all_logs" to "Sao chép tất cả",
+        "clear_logs" to "Xóa Log",
+        "logs_copied_toast" to "Đã sao chép nhật ký vào bộ nhớ tạm!",
+        "logs_cleared_toast" to "Đã xóa toàn bộ nhật ký!",
+        "no_logs_yet" to "Chưa có bản ghi nhật ký nào",
+        "log_level_all" to "Tất cả",
+        "log_level_action" to "Thao tác",
+        "log_level_info" to "Thông tin",
+        "log_level_warn" to "Cảnh báo",
+        "log_level_error" to "Lỗi",
+
+        // Japanese & Fonts
+        "romaji_converter_title" to "🇯🇵 CHUYỂN ĐỔI TIẾNG NHẬT / ROMAJI",
+        "romaji_converter_desc" to "Chuyển các âm tiết đã đồng bộ từ Romaji sang Hiragana, Katakana hoặc ghép chữ gốc (Kanji)",
+        "to_hiragana" to "Romaji -> Hiragana",
+        "to_katakana" to "Romaji -> Katakana",
+        "apply_original_script" to "Ghép Lời Gốc (Kanji/Kana)",
+        "add_custom_font" to "+ Thêm Phông Chữ (TTF/OTF)",
+        "custom_fonts_header" to "PHÔNG CHỮ TÙY CHỌN & HỆ THỐNG"
     )
 
     private val stringsEN = mapOf(
@@ -316,7 +341,32 @@ object Localization {
         "create_project" to "Create Project",
         "create_new_project_dialog" to "CREATE NEW PROJECT",
         "choose_preset" to "Choose from preset songs (auto filled):",
-        "cancel" to "Cancel"
+        "cancel" to "Cancel",
+
+        // Activity Logs
+        "activity_logs_title" to "ACTIVITY & SYSTEM LOGS",
+        "activity_logs_desc" to "Record app operations, warnings & errors (zero performance impact)",
+        "view_logs" to "View Logs",
+        "copy_logs" to "Copy Logs",
+        "copy_all_logs" to "Copy All",
+        "clear_logs" to "Clear Logs",
+        "logs_copied_toast" to "Logs copied to clipboard!",
+        "logs_cleared_toast" to "All logs cleared!",
+        "no_logs_yet" to "No logs recorded yet",
+        "log_level_all" to "All",
+        "log_level_action" to "Action",
+        "log_level_info" to "Info",
+        "log_level_warn" to "Warning",
+        "log_level_error" to "Error",
+
+        // Japanese & Fonts
+        "romaji_converter_title" to "🇯🇵 JAPANESE / ROMAJI CONVERTER",
+        "romaji_converter_desc" to "Convert synchronized Romaji syllables to Hiragana, Katakana, or apply original script (Kanji)",
+        "to_hiragana" to "Romaji -> Hiragana",
+        "to_katakana" to "Romaji -> Katakana",
+        "apply_original_script" to "Apply Original Script (Kanji/Kana)",
+        "add_custom_font" to "+ Add Custom Font (TTF/OTF)",
+        "custom_fonts_header" to "CUSTOM & SYSTEM FONTS"
     )
 
     fun get(key: String, lang: Language): String {

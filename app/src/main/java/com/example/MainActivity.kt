@@ -2,6 +2,7 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.*
@@ -12,6 +13,7 @@ import com.example.ui.editor.EditorScreen
 import com.example.ui.home.HomeScreen
 import com.example.ui.settings.AppSettings
 import com.example.ui.theme.KaraokeStudioTheme
+import com.example.ui.util.CustomFontManager
 import com.example.viewmodel.KaraokeViewModel
 
 sealed class Screen {
@@ -23,6 +25,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        CustomFontManager.initialize(this)
         val appSettings = AppSettings.getInstance(this)
 
         setContent {
@@ -47,6 +50,12 @@ class MainActivity : ComponentActivity() {
             KaraokeStudioTheme(themeMode = themeMode, dynamicColor = false) {
                 val viewModel: KaraokeViewModel = viewModel()
                 var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+
+                BackHandler(enabled = currentScreen is Screen.Editor) {
+                    viewModel.stopPlayback()
+                    viewModel.selectProject(-1)
+                    currentScreen = Screen.Home
+                }
 
                 when (val screen = currentScreen) {
                     is Screen.Home -> {
